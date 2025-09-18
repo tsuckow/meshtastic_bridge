@@ -34,6 +34,9 @@
     "ghcr.io/devcontainers-extra/features/starship": {},
     "ghcr.io/devcontainers-extra/features/go-task:1": {}
   },
+  "containerEnv": {
+    "SHELL": "/bin/bash"
+  },
   "customizations": {
     "vscode": {
       "extensions": [
@@ -43,10 +46,11 @@
         "redhat.vscode-yaml",
         "esbenp.prettier-vscode",
         "anaer.vscode-version-lens",
-        "github.copilot-chat"
+        "github.copilot-chat",
+        "mathiasfrohlich.kotlin"
       ],
       "settings": {
-        "terminal.integrated.shell.linux": "/bin/bash"
+        "terminal.integrated.shell.linux": "/usr/bin/bash"
       }
     }
   },
