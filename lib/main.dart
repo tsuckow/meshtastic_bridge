@@ -4,6 +4,7 @@ import 'package:english_words/english_words.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   runApp(MyApp());
@@ -69,6 +70,15 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   }
 
   void _startScan() async {
+    // Request runtime permissions before scanning
+    final granted = await _ensurePermissions();
+    if (!granted) {
+      // Permissions not granted: update state and return
+      setState(() {
+        _scanning = false;
+      });
+      return;
+    }
     setState(() {
       _scanning = true;
       _devices = [];
@@ -93,6 +103,37 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
         _scanning = false;
       });
     });
+  }
+
+  Future<bool> _ensurePermissions() async {
+    // On Android 12+ we need BLUETOOTH_SCAN and BLUETOOTH_CONNECT. On older devices, location
+    // permission may be required for scans.
+    if (Theme.of(context).platform == TargetPlatform.android) {
+      final statuses = await [
+        Permission.bluetooth,
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+      ].request();
+
+      // Check at least scan/connect granted
+      final scanGranted =
+          statuses[Permission.bluetoothScan]?.isGranted ?? false;
+      final connectGranted =
+          statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+      final bluetoothGranted =
+          statuses[Permission.bluetooth]?.isGranted ?? false;
+      final locationGranted =
+          statuses[Permission.locationWhenInUse]?.isGranted ?? false;
+
+      return scanGranted ||
+          bluetoothGranted ||
+          locationGranted ||
+          connectGranted;
+    }
+
+    // On other platforms, permissions are typically not required here
+    return true;
   }
 
   void _stopScan() async {
@@ -147,12 +188,12 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     );
   }
 
-    @override
-    void dispose() {
-      try {
-        _scanSub.cancel();
-      } catch (_) {}
-      UniversalBle.stopScan();
-      super.dispose();
-    }
+  @override
+  void dispose() {
+    try {
+      _scanSub.cancel();
+    } catch (_) {}
+    UniversalBle.stopScan();
+    super.dispose();
+  }
 }
