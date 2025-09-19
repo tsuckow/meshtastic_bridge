@@ -17,6 +17,7 @@ const String logChar = '5a3d6e49-06e6-4423-9944-e9de8cdf9547';
 class BleService {
   final String deviceId;
   StreamSubscription<Uint8List>? _fromRadioSub;
+  StreamSubscription<Uint8List>? _fromNumSub;
   StreamSubscription<Uint8List>? _logSub;
   StreamSubscription<bool>? _connectionSub;
 
@@ -63,25 +64,25 @@ class BleService {
       _logController.add('connect: requestMtu failed: $e');
     }
 
-    // Subscribe to FromRadio characteristic notifications
-    _logController.add('connect: subscribing to FromRadio char');
+    // Subscribe to FromNum notifications. When FromNum notifies, we need to read
+    // the fromRadio mailbox characteristic and drain any available packets.
+    _logController.add('connect: subscribing to FromNum char');
     try {
-      // subscribe to the FromRadio characteristic (the stream we listen to)
       await UniversalBle.subscribeNotifications(
-          deviceId, meshtasticServiceUuid, fromRadioChar);
-      _logController.add('connect: subscribeNotifications(fromRadio) ok');
+          deviceId, meshtasticServiceUuid, fromNumChar);
+      _logController.add('connect: subscribeNotifications(fromNum) ok');
     } catch (e) {
-      _logController
-          .add('connect: subscribeNotifications(fromRadio) failed: $e');
+      _logController.add('connect: subscribeNotifications(fromNum) failed: $e');
     }
 
-    _fromRadioSub?.cancel();
-    _fromRadioSub =
-        UniversalBle.characteristicValueStream(deviceId, fromRadioChar).listen(
-            (value) {
-      _handleFromRadio(value);
+    _fromNumSub?.cancel();
+    _fromNumSub = UniversalBle.characteristicValueStream(deviceId, fromNumChar)
+        .listen((value) {
+      _logController.add('FromNum notify: ${value.length} bytes');
+      // Read and drain fromRadio mailbox
+      _drainFromRadio();
     }, onError: (e) {
-      _logController.add('FromRadio stream error: $e');
+      _logController.add('FromNum stream error: $e');
     });
 
     // Subscribe to LOG notifications
@@ -124,6 +125,14 @@ class BleService {
       final toRadio = mesh.ToRadio(wantConfigId: rand);
       await writeToRadio(toRadio);
       _logController.add('Sent wantConfigId: $rand');
+      // Attempt to immediately read any config packets now that we've requested them.
+      try {
+        _logController.add('connect: draining fromRadio after wantConfigId');
+        await _drainFromRadio();
+        _logController.add('connect: finished draining fromRadio');
+      } catch (e) {
+        _logController.add('connect: draining fromRadio failed: $e');
+      }
     } catch (e) {
       _logController.add('Failed to send wantConfigId: $e');
     }
@@ -132,12 +141,18 @@ class BleService {
   Future<void> disconnect() async {
     _logController.add('disconnect: cancelling subscriptions');
     _fromRadioSub?.cancel();
+    _fromNumSub?.cancel();
     _logSub?.cancel();
     _connectionSub?.cancel();
     try {
       _logController.add('disconnect: unsubscribing from fromRadio');
       await UniversalBle.unsubscribe(
           deviceId, meshtasticServiceUuid, fromRadioChar);
+    } catch (_) {}
+    try {
+      _logController.add('disconnect: unsubscribing from fromNum');
+      await UniversalBle.unsubscribe(
+          deviceId, meshtasticServiceUuid, fromNumChar);
     } catch (_) {}
     try {
       _logController.add('disconnect: unsubscribing from log');
@@ -166,6 +181,43 @@ class BleService {
       }
     } catch (e) {
       _logController.add('Failed to decode FromRadio: $e');
+    }
+  }
+
+  /// Read and drain the `fromRadio` mailbox characteristic.
+  /// The device will return an empty packet when there's nothing to read.
+  Future<void> _drainFromRadio() async {
+    const int maxReads = 50; // safety cap
+    int reads = 0;
+    try {
+      while (reads < maxReads) {
+        reads += 1;
+        _logController
+            .add('drainFromRadio: reading fromRadio (attempt $reads)');
+        Uint8List bytes;
+        try {
+          final v = await UniversalBle.read(
+              deviceId, meshtasticServiceUuid, fromRadioChar);
+          bytes = v;
+        } catch (e) {
+          _logController.add('drainFromRadio: read failed: $e');
+          break;
+        }
+
+        if (bytes.isEmpty) {
+          _logController.add('drainFromRadio: empty packet, done');
+          break;
+        }
+
+        _logController.add('drainFromRadio: got ${bytes.length} bytes');
+        try {
+          _handleFromRadio(bytes);
+        } catch (e) {
+          _logController.add('drainFromRadio: decode error: $e');
+        }
+      }
+    } catch (e) {
+      _logController.add('drainFromRadio: unexpected error: $e');
     }
   }
 
