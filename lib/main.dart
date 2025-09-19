@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'services/ble_service.dart' as meshtastic_ble;
 
 const String meshtasticServiceUuid = '6ba1b218-15a8-461f-9fa8-5dcae273eafd';
 
@@ -64,6 +65,9 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   List<BleDevice> _devices = [];
   bool _scanning = false;
   String? _selectedDeviceId;
+  meshtastic_ble.BleService? _bleService;
+  List<String> _logs = [];
+  StreamSubscription<String>? _logSub;
 
   @override
   void initState() {
@@ -201,11 +205,50 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                     onTap: () {
                       setState(() {
                         _selectedDeviceId = device.deviceId;
+                        _logs = [];
+                      });
+
+                      // Connect using BleService
+                      _bleService?.dispose();
+                      _logSub?.cancel();
+                      _bleService = meshtastic_ble.BleService(device.deviceId);
+
+                      // Attach log listener before connecting so we capture logs emitted
+                      // during the connection procedure (service discovery / first writes).
+                      _logSub = _bleService!.logs.listen((line) {
+                        setState(() {
+                          _logs.add(line);
+                          if (_logs.length > 500) _logs.removeAt(0);
+                        });
+                      });
+
+                      _bleService!.connect().catchError((e) {
+                        setState(() {
+                          _logs.add('Connect error: $e');
+                        });
                       });
                     },
                   );
                 },
               ),
+        SizedBox(height: 16),
+        Text('Logs:'),
+        Container(
+          height: 200,
+          decoration: BoxDecoration(border: Border.all(color: Colors.grey)),
+          child: _logs.isEmpty
+              ? Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Text('No logs yet.'),
+                )
+              : ListView.builder(
+                  itemCount: _logs.length,
+                  itemBuilder: (context, idx) => Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    child: Text(_logs[idx]),
+                  ),
+                ),
+        ),
       ],
     );
   }
