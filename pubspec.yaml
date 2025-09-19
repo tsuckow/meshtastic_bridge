@@ -1,5 +1,5 @@
-name: starter_application
-description: A new Flutter project.
+name: meshtastic_bridge
+description: Bridges radios via BLE
 
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 

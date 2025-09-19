@@ -68,6 +68,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   meshtastic_ble.BleService? _bleService;
   List<String> _logs = [];
   StreamSubscription<String>? _logSub;
+  final ScrollController _logScrollController = ScrollController();
 
   @override
   void initState() {
@@ -220,6 +221,17 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                           _logs.add(line);
                           if (_logs.length > 500) _logs.removeAt(0);
                         });
+
+                        // Auto-scroll to bottom after a new log entry is added.
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (_logScrollController.hasClients) {
+                            _logScrollController.animateTo(
+                              _logScrollController.position.maxScrollExtent,
+                              duration: Duration(milliseconds: 200),
+                              curve: Curves.easeOut,
+                            );
+                          }
+                        });
                       });
 
                       _bleService!.connect().catchError((e) {
@@ -242,6 +254,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                   child: Text('No logs yet.'),
                 )
               : ListView.builder(
+                  controller: _logScrollController,
                   itemCount: _logs.length,
                   itemBuilder: (context, idx) => Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -259,6 +272,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
       _scanSub.cancel();
     } catch (_) {}
     UniversalBle.stopScan();
+    _logScrollController.dispose();
     super.dispose();
   }
 }

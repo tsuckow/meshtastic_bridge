@@ -187,7 +187,7 @@ class BleService {
   /// Read and drain the `fromRadio` mailbox characteristic.
   /// The device will return an empty packet when there's nothing to read.
   Future<void> _drainFromRadio() async {
-    const int maxReads = 50; // safety cap
+    const int maxReads = 500; // safety cap
     int reads = 0;
     try {
       while (reads < maxReads) {
@@ -206,7 +206,7 @@ class BleService {
 
         if (bytes.isEmpty) {
           _logController.add('drainFromRadio: empty packet, done');
-          break;
+          return;
         }
 
         _logController.add('drainFromRadio: got ${bytes.length} bytes');
