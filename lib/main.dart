@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+const String meshtasticServiceUuid = '6ba1b218-15a8-461f-9fa8-5dcae273eafd';
+
 void main() {
   runApp(MyApp());
 }
@@ -85,12 +87,32 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     });
     // start scan and listen to the package's scanStream
     try {
-      await UniversalBle.startScan();
+      // Populate any already-known/system devices advertising the Meshtastic service
+      try {
+        final systemDevices = await UniversalBle.getSystemDevices(
+            withServices: [meshtasticServiceUuid]);
+        for (final d in systemDevices) {
+          if (!_devices.any((e) => e.deviceId == d.deviceId)) {
+            _devices.add(d);
+          }
+        }
+      } catch (_) {
+        // ignore; not all platforms may support getSystemDevices
+      }
+      await UniversalBle.startScan(
+        scanFilter: ScanFilter(withServices: [meshtasticServiceUuid]),
+      );
     } catch (e) {
       // ignore start errors for now
     }
 
     _scanSub = UniversalBle.scanStream.listen((device) {
+      // Filter to Meshtastic devices: check advertised services for our UUID.
+      final services = device.services.map((s) => s.toLowerCase()).toList();
+      if (!services.contains(meshtasticServiceUuid.toLowerCase())) {
+        return; // ignore non-meshtastic devices
+      }
+
       if (!_devices.any((d) => d.deviceId == device.deviceId)) {
         setState(() {
           _devices.add(device);
