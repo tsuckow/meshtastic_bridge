@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -170,13 +171,24 @@ class BleService {
     if (bytes.isEmpty) return;
     try {
       final msg = mesh.FromRadio.fromBuffer(bytes);
-      _logController.add('FromRadio payload: ${msg.whichPayloadVariant()}');
+      // Serialize the full FromRadio message to proto3 JSON for logging.
+      try {
+        final jsonMap = msg.toProto3Json();
+        final jsonText = jsonEncode(jsonMap);
+        _logController.add('FromRadio json: $jsonText');
+      } catch (e) {
+        _logController.add('FromRadio payload: ${msg.whichPayloadVariant()}');
+      }
 
       if (msg.hasMqttClientProxyMessage()) {
         final v = msg.mqttClientProxyMessage;
         if (v.hasData()) {
           final env = mqtt.ServiceEnvelope.fromBuffer(v.data);
-          _logController.add('MQTT envelope: ${env.packet}');
+          try {
+            _logController.add('MQTT envelope json: ${jsonEncode(env.toProto3Json())}');
+          } catch (e) {
+            _logController.add('MQTT envelope: ${env.packet}');
+          }
         }
       }
     } catch (e) {
