@@ -24,26 +24,79 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MyHomePage extends StatelessWidget {
+class MyHomePage extends StatefulWidget {
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  final _selectorKey = GlobalKey<_BleDeviceSelectorState>();
+
   @override
   Widget build(BuildContext context) {
+    final selector = BleDeviceSelector(key: _selectorKey);
     return Scaffold(
-      appBar: AppBar(title: Text('Meshtastic Bridge')),
+      appBar: AppBar(
+        title: Text('Meshtastic Bridge'),
+        actions: [
+          // Compact action for Device 1
+          IconButton(
+            tooltip: 'Select Device 1',
+            icon: const Icon(Icons.bluetooth_searching),
+            onPressed: () async {
+              final keyState = _selectorKey.currentState;
+              if (keyState == null) return;
+              final id = await BleDevicePickerButton.pickDevice(
+                context,
+                currentDeviceId: keyState._dev1.selectedDeviceId,
+                onDisconnect: () async {
+                  await keyState._dev1.disconnect(clearSaved: true);
+                },
+              );
+              if (id != null) {
+                await keyState._dev1.ensurePermissions();
+                await keyState._dev1.connectTo(id);
+                keyState.setState(() {});
+              } else {
+                keyState.setState(() {});
+              }
+            },
+          ),
+          // Compact action for Device 2
+          IconButton(
+            tooltip: 'Select Device 2',
+            icon: const Icon(Icons.bluetooth_searching_outlined),
+            onPressed: () async {
+              final keyState = _selectorKey.currentState;
+              if (keyState == null) return;
+              final id = await BleDevicePickerButton.pickDevice(
+                context,
+                currentDeviceId: keyState._dev2.selectedDeviceId,
+                onDisconnect: () async {
+                  await keyState._dev2.disconnect(clearSaved: true);
+                },
+              );
+              if (id != null) {
+                await keyState._dev2.ensurePermissions();
+                await keyState._dev2.connectTo(id);
+                keyState.setState(() {});
+              } else {
+                keyState.setState(() {});
+              }
+            },
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Select BLE devices:'),
-            BleDeviceSelector(),
-          ],
-        ),
+        child: selector,
       ),
     );
   }
 }
 
 class BleDeviceSelector extends StatefulWidget {
+  const BleDeviceSelector({super.key});
   @override
   State<BleDeviceSelector> createState() => _BleDeviceSelectorState();
 }
@@ -89,82 +142,43 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     });
   }
 
+  String _shortId(String? id) {
+    if (id == null || id.isEmpty) return 'not selected';
+    final s = id.replaceAll(':', '');
+    if (s.length <= 4) return s;
+    return '...${s.substring(s.length - 4)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Device 1 controls
-        Row(
+        // Optional: current device IDs summary
+        Wrap(
+          spacing: 12,
+          runSpacing: 6,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Device 1'),
-                  SizedBox(height: 6),
-                  _dev1.selectedDeviceId == null
-                      ? BleDevicePickerButton(
-                          onDeviceSelected: (deviceId) async {
-                            final ok = await _dev1.ensurePermissions();
-                            if (!ok) return;
-                            await _dev1.connectTo(deviceId);
-                            setState(() {});
-                          },
-                        )
-                      : ElevatedButton.icon(
-                          onPressed: () async {
-                            await _dev1.disconnect(clearSaved: true);
-                            setState(() {});
-                          },
-                          icon: Icon(Icons.power_settings_new),
-                          label: Text('Disconnect (${_dev1.selectedDeviceId})'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.redAccent,
-                          ),
-                        ),
-                ],
-              ),
+            Chip(
+              label: Text('Device 1: ${_shortId(_dev1.selectedDeviceId)}'),
             ),
-          ],
-        ),
-        SizedBox(height: 12),
-        // Device 2 controls
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Device 2'),
-                  SizedBox(height: 6),
-                  _dev2.selectedDeviceId == null
-                      ? BleDevicePickerButton(
-                          onDeviceSelected: (deviceId) async {
-                            final ok = await _dev2.ensurePermissions();
-                            if (!ok) return;
-                            await _dev2.connectTo(deviceId);
-                            setState(() {});
-                          },
-                        )
-                      : ElevatedButton.icon(
-                          onPressed: () async {
-                            await _dev2.disconnect(clearSaved: true);
-                            setState(() {});
-                          },
-                          icon: Icon(Icons.power_settings_new),
-                          label: Text('Disconnect (${_dev2.selectedDeviceId})'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.redAccent,
-                          ),
-                        ),
-                ],
-              ),
+            Chip(
+              label: Text('Device 2: ${_shortId(_dev2.selectedDeviceId)}'),
             ),
           ],
         ),
         SizedBox(height: 16),
-        Text('Logs:'),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Logs:'),
+            TextButton.icon(
+              onPressed: () => setState(() => _logs.clear()),
+              icon: const Icon(Icons.clear),
+              label: const Text('Clear'),
+            ),
+          ],
+        ),
         Container(
           height: 200,
           decoration: BoxDecoration(border: Border.all(color: Colors.grey)),
