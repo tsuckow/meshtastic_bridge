@@ -236,8 +236,11 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
       ..addAll(_dev2.portCounts.keys);
     final sortedPorts = ports.toList()..sort();
 
-    final headerStyle = Theme.of(context).textTheme.labelLarge;
-    final cellPad = const EdgeInsets.symmetric(vertical: 6, horizontal: 8);
+    final headerStyle =
+        Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12);
+    final cellTextStyle =
+        Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12);
+    final cellPad = const EdgeInsets.symmetric(vertical: 4, horizontal: 8);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,31 +256,86 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
             children: [
               Row(children: [
                 Expanded(
-                    child: Padding(
-                        padding: cellPad,
-                        child: Text('Port', style: headerStyle))),
+                  flex: 6,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Port',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
                 Expanded(
-                    child: Padding(
-                        padding: cellPad,
-                        child: Text('Device 1', style: headerStyle))),
+                  flex: 2,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Device 1',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
                 Expanded(
-                    child: Padding(
-                        padding: cellPad,
-                        child: Text('Device 2', style: headerStyle))),
+                  flex: 2,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Device 2',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
               ]),
               const Divider(height: 1),
               Row(children: [
                 Expanded(
-                    child: Padding(
-                        padding: cellPad, child: Text('Encrypted (count)'))),
+                  flex: 6,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Encrypted (count)',
+                      style: cellTextStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
                 Expanded(
-                    child: Padding(
-                        padding: cellPad,
-                        child: Text('${_dev1.encryptedPacketCount}'))),
+                  flex: 2,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      '${_dev1.encryptedPacketCount}',
+                      style: cellTextStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
                 Expanded(
-                    child: Padding(
-                        padding: cellPad,
-                        child: Text('${_dev2.encryptedPacketCount}'))),
+                  flex: 2,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      '${_dev2.encryptedPacketCount}',
+                      style: cellTextStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
               ]),
               const Divider(height: 1),
               if (sortedPorts.isEmpty)
@@ -295,14 +353,44 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                     children: [
                       Row(children: [
                         Expanded(
-                            child:
-                                Padding(padding: cellPad, child: Text(name))),
+                          flex: 6,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              name,
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
                         Expanded(
-                            child:
-                                Padding(padding: cellPad, child: Text('$c1'))),
+                          flex: 2,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              '$c1',
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
                         Expanded(
-                            child:
-                                Padding(padding: cellPad, child: Text('$c2'))),
+                          flex: 2,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              '$c2',
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
                       ]),
                       const Divider(height: 1),
                     ],
