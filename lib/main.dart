@@ -5,13 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/ble_service.dart' as meshtastic_ble;
 
 const String meshtasticServiceUuid = '6ba1b218-15a8-461f-9fa8-5dcae273eafd';
 
-void main() {
-  runApp(MyApp());
-}
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -21,7 +20,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => MyAppState(),
       child: MaterialApp(
-        title: 'Namer App',
+        title: 'Meshtastic Bridge',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
@@ -42,14 +41,19 @@ class MyHomePage extends StatelessWidget {
     var appState = context.watch<MyAppState>();
 
     return Scaffold(
-      body: Column(
-        children: [
-          Text('A random idea:'),
-          Text(appState.current.asLowerCase),
-          SizedBox(height: 32),
-          Text('Select a BLE device:'),
-          BleDeviceSelector(),
-        ],
+      appBar: AppBar(title: Text('Meshtastic Bridge')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('A random idea:'),
+            Text(appState.current.asLowerCase),
+            SizedBox(height: 24),
+            Text('Select a BLE device:'),
+            BleDeviceSelector(),
+          ],
+        ),
       ),
     );
   }
@@ -61,7 +65,7 @@ class BleDeviceSelector extends StatefulWidget {
 }
 
 class _BleDeviceSelectorState extends State<BleDeviceSelector> {
-  late final StreamSubscription<BleDevice> _scanSub;
+  StreamSubscription<BleDevice>? _scanSub;
   List<BleDevice> _devices = [];
   bool _scanning = false;
   String? _selectedDeviceId;
@@ -69,72 +73,112 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   List<String> _logs = [];
   StreamSubscription<String>? _logSub;
   final ScrollController _logScrollController = ScrollController();
+  void Function(VoidCallback fn)? _modalSetState;
+
+  static const _prefsKeySelectedDevice = 'selectedDeviceId';
 
   @override
   void initState() {
     super.initState();
-    _startScan();
+    _maybeAutoConnect();
   }
 
-  void _startScan() async {
-    // Request runtime permissions before scanning
+  Future<void> _saveSelectedDevice(String? id) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (id == null) {
+      await prefs.remove(_prefsKeySelectedDevice);
+    } else {
+      await prefs.setString(_prefsKeySelectedDevice, id);
+    }
+  }
+
+  Future<void> _maybeAutoConnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString(_prefsKeySelectedDevice);
+    if (id != null) {
+      setState(() {
+        _selectedDeviceId = id;
+        _logs = [];
+      });
+
+      final granted = await _ensurePermissions();
+      if (!granted) return;
+
+      _bleService?.dispose();
+      _logSub?.cancel();
+      _bleService = meshtastic_ble.BleService(id);
+      _attachLogListener(_bleService!);
+
+      try {
+        await _bleService!.connect();
+      } catch (e) {
+        setState(() => _logs.add('Auto-connect error: $e'));
+      }
+    }
+  }
+
+  void _attachLogListener(meshtastic_ble.BleService svc) {
+    _logSub = svc.logs.listen((line) {
+      setState(() {
+        _logs.add(line);
+        if (_logs.length > 500) _logs.removeAt(0);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_logScrollController.hasClients) {
+          _logScrollController.animateTo(
+            _logScrollController.position.maxScrollExtent,
+            duration: Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    });
+  }
+
+  Future<void> _startScan() async {
+    if (_scanning) return; // already scanning
     final granted = await _ensurePermissions();
     if (!granted) {
-      // Permissions not granted: update state and return
-      setState(() {
-        _scanning = false;
-      });
+      setState(() => _scanning = false);
+      _modalSetState?.call(() {});
       return;
     }
     setState(() {
       _scanning = true;
       _devices = [];
     });
-    // start scan and listen to the package's scanStream
+    _modalSetState?.call(() {});
+
     try {
-      // Populate any already-known/system devices advertising the Meshtastic service
       try {
         final systemDevices = await UniversalBle.getSystemDevices(
             withServices: [meshtasticServiceUuid]);
         for (final d in systemDevices) {
-          if (!_devices.any((e) => e.deviceId == d.deviceId)) {
-            _devices.add(d);
-          }
+          if (!_devices.any((e) => e.deviceId == d.deviceId)) _devices.add(d);
         }
-      } catch (_) {
-        // ignore; not all platforms may support getSystemDevices
-      }
+      } catch (_) {}
       await UniversalBle.startScan(
         scanFilter: ScanFilter(withServices: [meshtasticServiceUuid]),
       );
-    } catch (e) {
-      // ignore start errors for now
-    }
+    } catch (_) {}
 
     _scanSub = UniversalBle.scanStream.listen((device) {
-      // Filter to Meshtastic devices: check advertised services for our UUID.
-      final services = device.services.map((s) => s.toLowerCase()).toList();
-      if (!services.contains(meshtasticServiceUuid.toLowerCase())) {
-        return; // ignore non-meshtastic devices
-      }
-
+      // Rely on startScan filter by service; don't double-filter here as some platforms
+      // don't populate advertisement services consistently.
       if (!_devices.any((d) => d.deviceId == device.deviceId)) {
-        setState(() {
-          _devices.add(device);
-        });
+        setState(() => _devices.add(device));
+        _modalSetState?.call(() {});
       }
-    }, onError: (err) {
-      // handle scan errors if needed
+    }, onError: (_) {
+      setState(() => _scanning = false);
+      _modalSetState?.call(() {});
     }, onDone: () {
-      setState(() {
-        _scanning = false;
-      });
+      setState(() => _scanning = false);
+      _modalSetState?.call(() {});
     });
   }
 
   Future<bool> _ensurePermissions() async {
-    // On Android 12+ we need BLUETOOTH_SCAN and BLUETOOTH_CONNECT. On older devices, location
-    // permission may be required for scans.
     if (Theme.of(context).platform == TargetPlatform.android) {
       final statuses = await [
         Permission.bluetooth,
@@ -143,116 +187,63 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
         Permission.locationWhenInUse,
       ].request();
 
-      // Check at least scan/connect granted
-      final scanGranted =
-          statuses[Permission.bluetoothScan]?.isGranted ?? false;
-      final connectGranted =
-          statuses[Permission.bluetoothConnect]?.isGranted ?? false;
-      final bluetoothGranted =
-          statuses[Permission.bluetooth]?.isGranted ?? false;
-      final locationGranted =
-          statuses[Permission.locationWhenInUse]?.isGranted ?? false;
+      final scanGranted = statuses[Permission.bluetoothScan]?.isGranted ?? false;
+      final connectGranted = statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+      final bluetoothGranted = statuses[Permission.bluetooth]?.isGranted ?? false;
+      final locationGranted = statuses[Permission.locationWhenInUse]?.isGranted ?? false;
 
-      return scanGranted ||
-          bluetoothGranted ||
-          locationGranted ||
-          connectGranted;
+      return scanGranted || bluetoothGranted || locationGranted || connectGranted;
     }
-
-    // On other platforms, permissions are typically not required here
     return true;
   }
 
-  void _stopScan() async {
+  Future<void> _stopScan() async {
     await UniversalBle.stopScan();
-    await _scanSub.cancel();
-    setState(() {
-      _scanning = false;
-    });
+    try {
+      await _scanSub?.cancel();
+      _scanSub = null;
+    } catch (_) {}
+    setState(() => _scanning = false);
+    _modalSetState?.call(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _scanning
-            ? Row(
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(width: 12),
-                  ElevatedButton(onPressed: _stopScan, child: Text('Stop')),
-                ],
-              )
-            : ElevatedButton(
-                onPressed: _startScan,
-                child: Text('Scan'),
-              ),
-        SizedBox(height: 16),
-        _devices.isEmpty
-            ? Text('No devices found.')
-            : ListView.builder(
-                shrinkWrap: true,
-                itemCount: _devices.length,
-                itemBuilder: (context, index) {
-                  final device = _devices[index];
-                  return ListTile(
-                    title: Text(device.name != null && device.name!.isNotEmpty
-                        ? device.name!
-                        : device.deviceId),
-                    subtitle: Text(device.deviceId),
-                    trailing: _selectedDeviceId == device.deviceId
-                        ? Icon(Icons.check, color: Colors.green)
-                        : null,
-                    onTap: () {
-                      setState(() {
-                        _selectedDeviceId = device.deviceId;
-                        _logs = [];
-                      });
-
-                      // Connect using BleService
-                      _bleService?.dispose();
-                      _logSub?.cancel();
-                      _bleService = meshtastic_ble.BleService(device.deviceId);
-
-                      // Attach log listener before connecting so we capture logs emitted
-                      // during the connection procedure (service discovery / first writes).
-                      _logSub = _bleService!.logs.listen((line) {
+        Row(
+          children: [
+            Expanded(
+              child: _selectedDeviceId == null
+                  ? ElevatedButton(onPressed: _showDevicePicker, child: Text('Select device'))
+                  : ElevatedButton.icon(
+                      onPressed: () async {
+                        try {
+                          await _bleService?.disconnect();
+                        } catch (_) {}
+                        _bleService?.dispose();
+                        await _logSub?.cancel();
                         setState(() {
-                          _logs.add(line);
-                          if (_logs.length > 500) _logs.removeAt(0);
+                          _selectedDeviceId = null;
+                          _logs = [];
                         });
-
-                        // Auto-scroll to bottom after a new log entry is added.
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (_logScrollController.hasClients) {
-                            _logScrollController.animateTo(
-                              _logScrollController.position.maxScrollExtent,
-                              duration: Duration(milliseconds: 200),
-                              curve: Curves.easeOut,
-                            );
-                          }
-                        });
-                      });
-
-                      _bleService!.connect().catchError((e) {
-                        setState(() {
-                          _logs.add('Connect error: $e');
-                        });
-                      });
-                    },
-                  );
-                },
-              ),
+                        await _saveSelectedDevice(null);
+                      },
+                      icon: Icon(Icons.power_settings_new),
+                      label: Text('Disconnect'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                    ),
+            ),
+          ],
+        ),
         SizedBox(height: 16),
         Text('Logs:'),
         Container(
           height: 200,
           decoration: BoxDecoration(border: Border.all(color: Colors.grey)),
           child: _logs.isEmpty
-              ? Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Text('No logs yet.'),
-                )
+              ? Padding(padding: EdgeInsets.all(8), child: Text('No logs yet.'))
               : ListView.builder(
                   controller: _logScrollController,
                   itemCount: _logs.length,
@@ -269,10 +260,90 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   @override
   void dispose() {
     try {
-      _scanSub.cancel();
+      _scanSub?.cancel();
     } catch (_) {}
     UniversalBle.stopScan();
     _logScrollController.dispose();
+    _logSub?.cancel();
+    _bleService?.dispose();
     super.dispose();
   }
+
+  void _showDevicePicker() async {
+    // Begin scanning, then show the modal.
+    _startScan();
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            _modalSetState = setModalState;
+            return SizedBox(
+              height: 400,
+              child: Column(
+                children: [
+                  if (_scanning)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 8),
+                          Text('Scanning...')
+                        ],
+                      ),
+                    ),
+                  Expanded(
+                    child: _devices.isEmpty
+                        ? Center(child: Text(_scanning ? 'Scanning for devices...' : 'No devices found.'))
+                        : ListView.builder(
+                            itemCount: _devices.length,
+                            itemBuilder: (context, idx) {
+                              final d = _devices[idx];
+                              final title = (d.name != null && d.name!.isNotEmpty) ? d.name! : d.deviceId;
+                              return ListTile(
+                                title: Text(title),
+                                subtitle: Text(d.deviceId),
+                                onTap: () async {
+                                  Navigator.of(context).pop();
+                                  await _connectToDeviceId(d.deviceId);
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    // Stop scanning when the modal closes.
+    await _stopScan();
+  }
+
+  Future<void> _connectToDeviceId(String id) async {
+    setState(() {
+      _selectedDeviceId = id;
+      _logs = [];
+    });
+
+    await _saveSelectedDevice(id);
+
+    _bleService?.dispose();
+    await _logSub?.cancel();
+    _bleService = meshtastic_ble.BleService(id);
+    _attachLogListener(_bleService!);
+
+    try {
+      await _bleService!.connect();
+    } catch (e) {
+      setState(() => _logs.add('Connect error: $e'));
+    }
+  }
 }
+
