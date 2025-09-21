@@ -27,12 +27,15 @@ class BleService {
       StreamController<bool>.broadcast();
   final StreamController<mesh.MeshPacket> _packetController =
       StreamController<mesh.MeshPacket>.broadcast();
+  final StreamController<mesh.FromRadio> _fromRadioController =
+      StreamController<mesh.FromRadio>.broadcast();
   bool _isConnected = false;
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connection => _connectionStateController.stream;
   bool get isConnected => _isConnected;
   Stream<mesh.MeshPacket> get packets => _packetController.stream;
+  Stream<mesh.FromRadio> get fromRadio => _fromRadioController.stream;
 
   BleService(this.deviceId);
 
@@ -188,6 +191,9 @@ class BleService {
     if (bytes.isEmpty) return;
     try {
       final msg = mesh.FromRadio.fromBuffer(bytes);
+      try {
+        _fromRadioController.add(msg);
+      } catch (_) {}
       // Serialize the full FromRadio message to proto3 JSON for logging.
       try {
         final jsonMap = msg.toProto3Json();
@@ -280,5 +286,6 @@ class BleService {
     _logController.close();
     _connectionStateController.close();
     _packetController.close();
+    _fromRadioController.close();
   }
 }

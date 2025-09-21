@@ -24,6 +24,7 @@ class ManagedMeshtasticDevice {
   StreamSubscription<String>? _bleLogSub;
   StreamSubscription<bool>? _connSub;
   StreamSubscription<mesh.MeshPacket>? _pktSub;
+  StreamSubscription<mesh.FromRadio>? _fromSub;
   final StreamController<String> _logController =
       StreamController<String>.broadcast();
   final StreamController<bool> _connectedController =
@@ -42,6 +43,28 @@ class ManagedMeshtasticDevice {
   Stream<void> get statsChanged => _statsController.stream;
   int get encryptedPacketCount => _encryptedPackets;
   Map<int, int> get portCounts => Map.unmodifiable(_portCounts);
+
+  // Node/channel info
+  int? _myNodeNum;
+  int? get myNodeNum => _myNodeNum;
+  String? get myNodeNumHex => _myNodeNum == null
+      ? null
+      : '0x${_myNodeNum!.toRadixString(16).toUpperCase()}';
+
+  final Map<int, ChannelInfo> _channelsById = <int, ChannelInfo>{};
+  Map<int, String> get channelNamesById => Map.unmodifiable(
+      {for (final e in _channelsById.entries) e.key: e.value.name});
+  List<int> get sortedChannelIds {
+    final ids = _channelsById.keys.toList();
+    ids.sort();
+    return ids;
+  }
+
+  String? channelNameForId(int id) => _channelsById[id]?.name;
+
+  final StreamController<void> _infoController =
+      StreamController<void>.broadcast();
+  Stream<void> get infoChanged => _infoController.stream;
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
@@ -117,6 +140,43 @@ class ManagedMeshtasticDevice {
       } catch (_) {}
     });
 
+    // FromRadio for myInfo and channel messages
+    _fromSub = _ble!.fromRadio.listen((msg) {
+      bool changed = false;
+      try {
+        if (msg.hasMyInfo() && msg.myInfo.hasMyNodeNum()) {
+          final val = msg.myInfo.myNodeNum;
+          if (_myNodeNum != val) {
+            _myNodeNum = val;
+            changed = true;
+          }
+        }
+        if (msg.hasChannel()) {
+          final ch = msg.channel;
+          if (ch.hasSettings() && ch.settings.hasId()) {
+            final id = ch.settings.id;
+            final name = ch.settings.hasName() ? ch.settings.name : '';
+            final psk = ch.settings.hasPsk()
+                ? List<int>.from(ch.settings.psk)
+                : <int>[];
+            final existing = _channelsById[id];
+            if (existing == null || existing.name != name) {
+              _channelsById[id] = ChannelInfo(name: name, psk: psk);
+              changed = true;
+            } else if (!_listEquals(existing.psk, psk)) {
+              existing.psk = psk;
+              changed = true;
+            }
+          }
+        }
+      } catch (_) {}
+      if (changed) {
+        try {
+          _infoController.add(null);
+        } catch (_) {}
+      }
+    });
+
     try {
       _connecting = true;
       await _ble!.connect();
@@ -161,6 +221,10 @@ class ManagedMeshtasticDevice {
       _pktSub?.cancel();
     } catch (_) {}
     _pktSub = null;
+    try {
+      _fromSub?.cancel();
+    } catch (_) {}
+    _fromSub = null;
     _ble?.dispose();
     _ble = null;
   }
@@ -269,5 +333,21 @@ class ManagedMeshtasticDevice {
     _logController.close();
     _connectedController.close();
     _statsController.close();
+    _infoController.close();
   }
+}
+
+class ChannelInfo {
+  ChannelInfo({required this.name, required this.psk});
+  String name;
+  List<int> psk;
+}
+
+bool _listEquals(List<int> a, List<int> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

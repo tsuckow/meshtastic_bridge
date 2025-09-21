@@ -181,40 +181,72 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   Widget build(BuildContext context) {
     final logTextStyle =
         Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildStatsTable(context),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Logs:'),
-            TextButton.icon(
-              onPressed: () => setState(() => _logs.clear()),
-              icon: const Icon(Icons.clear),
-              label: const Text('Clear'),
-            ),
-          ],
-        ),
-        Container(
-          height: 200,
-          decoration: BoxDecoration(border: Border.all(color: Colors.grey)),
-          child: _logs.isEmpty
-              ? Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Text('No logs yet.', style: logTextStyle),
-                )
-              : ListView.builder(
-                  controller: _logScrollController,
-                  itemCount: _logs.length,
-                  itemBuilder: (context, idx) => Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    child: Text(_logs[idx], style: logTextStyle),
-                  ),
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const TabBar(
+            tabs: [
+              Tab(text: 'Logs'),
+              Tab(text: 'Packet Stats'),
+              Tab(text: 'Node/Channels'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: TabBarView(
+              children: [
+                // Logs tab
+                Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Logs'),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _logs.clear()),
+                          icon: const Icon(Icons.clear),
+                          label: const Text('Clear'),
+                        ),
+                      ],
+                    ),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey)),
+                        child: _logs.isEmpty
+                            ? Padding(
+                                padding: EdgeInsets.all(8),
+                                child:
+                                    Text('No logs yet.', style: logTextStyle),
+                              )
+                            : ListView.builder(
+                                controller: _logScrollController,
+                                itemCount: _logs.length,
+                                itemBuilder: (context, idx) => Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  child: Text(_logs[idx], style: logTextStyle),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
                 ),
-        ),
-      ],
+                // Packet stats tab
+                SingleChildScrollView(
+                  child: _buildStatsTable(context),
+                ),
+                // Node/channel info tab
+                SingleChildScrollView(
+                  child: _buildNodeChannelInfo(context),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -389,6 +421,178 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                             padding: cellPad,
                             child: Text(
                               '$c2',
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
+                      ]),
+                      const Divider(height: 1),
+                    ],
+                  );
+                }).toList(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNodeChannelInfo(BuildContext context) {
+    final headerStyle =
+        Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12);
+    final cellTextStyle =
+        Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12);
+    final cellPad = const EdgeInsets.symmetric(vertical: 4, horizontal: 8);
+
+    final ids = <int>{}
+      ..addAll(_dev1.sortedChannelIds)
+      ..addAll(_dev2.sortedChannelIds);
+    final sortedIds = ids.toList()..sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Node numbers'),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade400),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Device 1: '
+                  '${_dev1.myNodeNum == null ? 'Unknown' : '${_dev1.myNodeNum} (${_dev1.myNodeNumHex})'}',
+                  style: cellTextStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade400),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Device 2: '
+                  '${_dev2.myNodeNum == null ? 'Unknown' : '${_dev2.myNodeNum} (${_dev2.myNodeNumHex})'}',
+                  style: cellTextStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('Channels (by ID)'),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade400),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(
+            children: [
+              Row(children: [
+                Expanded(
+                  flex: 4,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Channel ID',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 3,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Device 1',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 3,
+                  child: Padding(
+                    padding: cellPad,
+                    child: Text(
+                      'Device 2',
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
+              ]),
+              const Divider(height: 1),
+              if (sortedIds.isEmpty)
+                Padding(
+                  padding: cellPad,
+                  child:
+                      Text('No channels reported yet.', style: cellTextStyle),
+                )
+              else
+                ...sortedIds.map((id) {
+                  final n1 = _dev1.channelNameForId(id) ?? '';
+                  final n2 = _dev2.channelNameForId(id) ?? '';
+                  return Column(
+                    children: [
+                      Row(children: [
+                        Expanded(
+                          flex: 4,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              '$id',
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              n1,
+                              style: cellTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Padding(
+                            padding: cellPad,
+                            child: Text(
+                              n2,
                               style: cellTextStyle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
