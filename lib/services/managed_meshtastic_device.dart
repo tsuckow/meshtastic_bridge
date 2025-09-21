@@ -5,6 +5,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ble_service.dart' as meshtastic_ble;
+import '../generated/protos/meshtastic/mesh.pb.dart' as mesh;
+import '../generated/protos/meshtastic/portnums.pbenum.dart' as portnums;
 
 /// Manages a single Meshtastic BLE device connection, persistence, and logs.
 /// Exposes a prefixed log stream suitable for display in a shared log pane.
@@ -21,6 +23,7 @@ class ManagedMeshtasticDevice {
   meshtastic_ble.BleService? _ble;
   StreamSubscription<String>? _bleLogSub;
   StreamSubscription<bool>? _connSub;
+  StreamSubscription<mesh.MeshPacket>? _pktSub;
   final StreamController<String> _logController =
       StreamController<String>.broadcast();
   final StreamController<bool> _connectedController =
@@ -30,6 +33,15 @@ class ManagedMeshtasticDevice {
   bool _reconnectLoopRunning = false;
   int _reconnectAttempt = 0;
   bool _connecting = false;
+
+  // Stats
+  int _encryptedPackets = 0;
+  final Map<int, int> _portCounts = <int, int>{};
+  final StreamController<void> _statsController =
+      StreamController<void>.broadcast();
+  Stream<void> get statsChanged => _statsController.stream;
+  int get encryptedPacketCount => _encryptedPackets;
+  Map<int, int> get portCounts => Map.unmodifiable(_portCounts);
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
@@ -78,6 +90,33 @@ class ManagedMeshtasticDevice {
       }
     });
 
+    // Packets for stats
+    _pktSub = _ble!.packets.listen((pkt) {
+      try {
+        switch (pkt.whichPayloadVariant()) {
+          case mesh.MeshPacket_PayloadVariant.encrypted:
+            _encryptedPackets += 1;
+            break;
+          case mesh.MeshPacket_PayloadVariant.decoded:
+            if (pkt.hasDecoded()) {
+              final p = pkt.decoded;
+              final port = p.hasPortnum()
+                  ? p.portnum.value
+                  : portnums.PortNum.UNKNOWN_APP.value;
+              _portCounts.update(port, (v) => v + 1, ifAbsent: () => 1);
+            }
+            break;
+          case mesh.MeshPacket_PayloadVariant.notSet:
+            // ignore
+            break;
+        }
+      } catch (_) {}
+      // notify listeners
+      try {
+        _statsController.add(null);
+      } catch (_) {}
+    });
+
     try {
       _connecting = true;
       await _ble!.connect();
@@ -118,6 +157,10 @@ class ManagedMeshtasticDevice {
       _connSub?.cancel();
     } catch (_) {}
     _connSub = null;
+    try {
+      _pktSub?.cancel();
+    } catch (_) {}
+    _pktSub = null;
     _ble?.dispose();
     _ble = null;
   }
@@ -225,5 +268,6 @@ class ManagedMeshtasticDevice {
     _disposeBleOnly();
     _logController.close();
     _connectedController.close();
+    _statsController.close();
   }
 }

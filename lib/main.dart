@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'widgets/ble_device_picker_button.dart';
 import 'services/managed_meshtastic_device.dart';
+import 'generated/protos/meshtastic/portnums.pbenum.dart' as portnums;
 
 // Meshtastic BLE service UUID is defined in the reusable picker.
 
@@ -113,6 +114,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   late final ManagedMeshtasticDevice _dev2;
   StreamSubscription<String>? _dev1LogSub;
   StreamSubscription<String>? _dev2LogSub;
+  StreamSubscription<void>? _dev1StatsSub;
+  StreamSubscription<void>? _dev2StatsSub;
   final ScrollController _logScrollController = ScrollController();
   static const _prefsKey1 = 'selectedDeviceId1';
   static const _prefsKey2 = 'selectedDeviceId2';
@@ -150,6 +153,10 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     // Auto-connect saved devices (no await to avoid delaying first build)
     _dev1.loadSavedAndAutoConnect();
     _dev2.loadSavedAndAutoConnect();
+
+    // Stats listeners to refresh table
+    _dev1StatsSub = _dev1.statsChanged.listen((_) => setState(() {}));
+    _dev2StatsSub = _dev2.statsChanged.listen((_) => setState(() {}));
   }
 
   void _appendLog(String line) {
@@ -168,32 +175,15 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     });
   }
 
-  String _shortId(String? id) {
-    if (id == null || id.isEmpty) return 'not selected';
-    final s = id.replaceAll(':', '');
-    if (s.length <= 4) return s;
-    return '...${s.substring(s.length - 4)}';
-  }
+  // Removed _shortId helper (no longer used after switching to stats table)
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Optional: current device IDs summary
-        Wrap(
-          spacing: 12,
-          runSpacing: 6,
-          children: [
-            Chip(
-              label: Text('Device 1: ${_shortId(_dev1.selectedDeviceId)}'),
-            ),
-            Chip(
-              label: Text('Device 2: ${_shortId(_dev2.selectedDeviceId)}'),
-            ),
-          ],
-        ),
-        SizedBox(height: 16),
+        _buildStatsTable(context),
+        const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -228,6 +218,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _logScrollController.dispose();
     _dev1LogSub?.cancel();
     _dev2LogSub?.cancel();
+    _dev1StatsSub?.cancel();
+    _dev2StatsSub?.cancel();
     _dev1.dispose();
     _dev2.dispose();
     // Also cancel AppBar listeners if set
@@ -235,5 +227,91 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     home?._dev1Conn?.cancel();
     home?._dev2Conn?.cancel();
     super.dispose();
+  }
+
+  Widget _buildStatsTable(BuildContext context) {
+    // Combine ports across devices and sort
+    final ports = <int>{}
+      ..addAll(_dev1.portCounts.keys)
+      ..addAll(_dev2.portCounts.keys);
+    final sortedPorts = ports.toList()..sort();
+
+    final headerStyle = Theme.of(context).textTheme.labelLarge;
+    final cellPad = const EdgeInsets.symmetric(vertical: 6, horizontal: 8);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Packet statistics'),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade400),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(
+            children: [
+              Row(children: [
+                Expanded(
+                    child: Padding(
+                        padding: cellPad,
+                        child: Text('Port', style: headerStyle))),
+                Expanded(
+                    child: Padding(
+                        padding: cellPad,
+                        child: Text('Device 1', style: headerStyle))),
+                Expanded(
+                    child: Padding(
+                        padding: cellPad,
+                        child: Text('Device 2', style: headerStyle))),
+              ]),
+              const Divider(height: 1),
+              Row(children: [
+                Expanded(
+                    child: Padding(
+                        padding: cellPad, child: Text('Encrypted (count)'))),
+                Expanded(
+                    child: Padding(
+                        padding: cellPad,
+                        child: Text('${_dev1.encryptedPacketCount}'))),
+                Expanded(
+                    child: Padding(
+                        padding: cellPad,
+                        child: Text('${_dev2.encryptedPacketCount}'))),
+              ]),
+              const Divider(height: 1),
+              if (sortedPorts.isEmpty)
+                Padding(
+                  padding: cellPad,
+                  child: Text('No unencrypted packets observed yet.'),
+                )
+              else
+                ...sortedPorts.map((port) {
+                  final c1 = _dev1.portCounts[port] ?? 0;
+                  final c2 = _dev2.portCounts[port] ?? 0;
+                  final name =
+                      portnums.PortNum.valueOf(port)?.name ?? 'PORT_$port';
+                  return Column(
+                    children: [
+                      Row(children: [
+                        Expanded(
+                            child:
+                                Padding(padding: cellPad, child: Text(name))),
+                        Expanded(
+                            child:
+                                Padding(padding: cellPad, child: Text('$c1'))),
+                        Expanded(
+                            child:
+                                Padding(padding: cellPad, child: Text('$c2'))),
+                      ]),
+                      const Divider(height: 1),
+                    ],
+                  );
+                }).toList(),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

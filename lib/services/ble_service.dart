@@ -25,11 +25,14 @@ class BleService {
   final StreamController<String> _logController = StreamController.broadcast();
   final StreamController<bool> _connectionStateController =
       StreamController<bool>.broadcast();
+  final StreamController<mesh.MeshPacket> _packetController =
+      StreamController<mesh.MeshPacket>.broadcast();
   bool _isConnected = false;
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connection => _connectionStateController.stream;
   bool get isConnected => _isConnected;
+  Stream<mesh.MeshPacket> get packets => _packetController.stream;
 
   BleService(this.deviceId);
 
@@ -194,6 +197,13 @@ class BleService {
         _logController.add('FromRadio payload: ${msg.whichPayloadVariant()}');
       }
 
+      // Emit MeshPacket for stats if present
+      if (msg.hasPacket()) {
+        try {
+          _packetController.add(msg.packet);
+        } catch (_) {}
+      }
+
       if (msg.hasMqttClientProxyMessage()) {
         final v = msg.mqttClientProxyMessage;
         if (v.hasData()) {
@@ -269,5 +279,6 @@ class BleService {
     _connectionSub?.cancel();
     _logController.close();
     _connectionStateController.close();
+    _packetController.close();
   }
 }
