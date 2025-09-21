@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'widgets/ble_device_picker_button.dart';
 import 'services/managed_meshtastic_device.dart';
+import 'services/virtual_meshtastic_device.dart';
 import 'generated/protos/meshtastic/portnums.pbenum.dart' as portnums;
 
 // Meshtastic BLE service UUID is defined in the reusable picker.
@@ -110,27 +111,35 @@ class BleDeviceSelector extends StatefulWidget {
 
 class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   List<String> _logs = [];
+  List<String> _virtlogs = [];
   late final ManagedMeshtasticDevice _dev1;
   late final ManagedMeshtasticDevice _dev2;
+  late final VirtualMeshtasticDevice _virt;
   StreamSubscription<String>? _dev1LogSub;
   StreamSubscription<String>? _dev2LogSub;
+  StreamSubscription<String>? _virtLogSub;
   StreamSubscription<void>? _dev1StatsSub;
   StreamSubscription<void>? _dev2StatsSub;
   StreamSubscription<void>? _dev1InfoSub;
   StreamSubscription<void>? _dev2InfoSub;
+  StreamSubscription<bool>? _virtConnSub;
   final ScrollController _logScrollController = ScrollController();
   static const _prefsKey1 = 'selectedDeviceId1';
   static const _prefsKey2 = 'selectedDeviceId2';
+  bool _virtConnected = false;
 
   @override
   void initState() {
     super.initState();
     _dev1 = ManagedMeshtasticDevice(prefsKey: _prefsKey1, label: 'Device 1');
     _dev2 = ManagedMeshtasticDevice(prefsKey: _prefsKey2, label: 'Device 2');
+    _virt =
+        VirtualMeshtasticDevice(prefsKey: 'virtualDevice', label: 'Virtual');
 
     // Merge device logs into UI log pane
     _dev1LogSub = _dev1.logs.listen(_appendLog);
     _dev2LogSub = _dev2.logs.listen(_appendLog);
+    _virtLogSub = _virt.logs.listen(_appendVirtLog);
 
     // Bubble connection state to AppBar icons
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -156,6 +165,12 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _dev1.loadSavedAndAutoConnect();
     _dev2.loadSavedAndAutoConnect();
 
+    // Start the virtual TCP server immediately
+    unawaited(_virt.start());
+    _virtConnSub = _virt.connected.listen((c) {
+      if (mounted) setState(() => _virtConnected = c);
+    });
+
     // Stats listeners to refresh table
     _dev1StatsSub = _dev1.statsChanged.listen((_) => setState(() {}));
     _dev2StatsSub = _dev2.statsChanged.listen((_) => setState(() {}));
@@ -179,6 +194,22 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     });
   }
 
+  void _appendVirtLog(String line) {
+    setState(() {
+      _virtlogs.add(line);
+      if (_virtlogs.length > 500) _virtlogs.removeAt(0);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   // Removed _shortId helper (no longer used after switching to stats table)
 
   @override
@@ -186,7 +217,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     final logTextStyle =
         Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12);
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -195,6 +226,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
               Tab(text: 'Logs'),
               Tab(text: 'Packet Stats'),
               Tab(text: 'Node/Channels'),
+              Tab(text: 'Virtual'),
             ],
           ),
           const SizedBox(height: 8),
@@ -207,7 +239,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Logs'),
+                        Text(
+                            'Logs — TCP :${_virt.port}${_virtConnected ? " (client connected)" : ""}'),
                         TextButton.icon(
                           onPressed: () => setState(() => _logs.clear()),
                           icon: const Icon(Icons.clear),
@@ -246,6 +279,61 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                 SingleChildScrollView(
                   child: _buildNodeChannelInfo(context),
                 ),
+                // Virtual server tab
+                Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                            'Virtual — TCP :${_virt.port}${_virtConnected ? " (client connected)" : ""}'),
+                        Row(children: [
+                          TextButton.icon(
+                            onPressed: () => setState(() => _virtlogs.clear()),
+                            icon: const Icon(Icons.clear),
+                            label: const Text('Clear'),
+                          ),
+                        ]),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey)),
+                        child: StreamBuilder<String>(
+                          stream: _virt.logs,
+                          builder: (context, snapshot) {
+                            // We already append server logs to _logs, but this dedicated view
+                            // reads from the stream directly for immediacy.
+                            // For simplicity, reuse the merged logs but filter by prefix.
+                            final logTextStyle = Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontSize: 12);
+                            final virtOnly = _virtlogs.toList();
+                            return virtOnly.isEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Text('No virtual logs yet.',
+                                        style: logTextStyle),
+                                  )
+                                : ListView.builder(
+                                    controller: _logScrollController,
+                                    itemCount: virtOnly.length,
+                                    itemBuilder: (context, idx) => Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 2),
+                                      child: Text(virtOnly[idx],
+                                          style: logTextStyle),
+                                    ),
+                                  );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -259,10 +347,13 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _logScrollController.dispose();
     _dev1LogSub?.cancel();
     _dev2LogSub?.cancel();
+    _virtLogSub?.cancel();
     _dev1StatsSub?.cancel();
     _dev2StatsSub?.cancel();
     _dev1.dispose();
     _dev2.dispose();
+    _virtConnSub?.cancel();
+    _virt.dispose();
     // Also cancel AppBar listeners if set
     final home = context.findAncestorStateOfType<_MyHomePageState>();
     home?._dev1Conn?.cancel();
