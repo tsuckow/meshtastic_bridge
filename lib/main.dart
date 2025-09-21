@@ -31,6 +31,10 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final _selectorKey = GlobalKey<_BleDeviceSelectorState>();
+  StreamSubscription<bool>? _dev1Conn;
+  StreamSubscription<bool>? _dev2Conn;
+  bool _d1 = false;
+  bool _d2 = false;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +46,8 @@ class _MyHomePageState extends State<MyHomePage> {
           // Compact action for Device 1
           IconButton(
             tooltip: 'Select Device 1',
-            icon: const Icon(Icons.bluetooth_searching),
+            icon: Icon(Icons.bluetooth_searching,
+                color: _d1 ? Colors.green : null),
             onPressed: () async {
               final keyState = _selectorKey.currentState;
               if (keyState == null) return;
@@ -65,7 +70,8 @@ class _MyHomePageState extends State<MyHomePage> {
           // Compact action for Device 2
           IconButton(
             tooltip: 'Select Device 2',
-            icon: const Icon(Icons.bluetooth_searching_outlined),
+            icon: Icon(Icons.bluetooth_searching_outlined,
+                color: _d2 ? Colors.green : null),
             onPressed: () async {
               final keyState = _selectorKey.currentState;
               if (keyState == null) return;
@@ -120,6 +126,26 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     // Merge device logs into UI log pane
     _dev1LogSub = _dev1.logs.listen(_appendLog);
     _dev2LogSub = _dev2.logs.listen(_appendLog);
+
+    // Bubble connection state to AppBar icons
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final home = context.findAncestorStateOfType<_MyHomePageState>();
+      if (home != null) {
+        home._dev1Conn?.cancel();
+        home._dev2Conn?.cancel();
+        home._dev1Conn = _dev1.connected.listen((c) {
+          home.setState(() => home._d1 = c);
+        });
+        home._dev2Conn = _dev2.connected.listen((c) {
+          home.setState(() => home._d2 = c);
+        });
+        // Also set initial values so icons reflect current state immediately
+        home.setState(() {
+          home._d1 = _dev1.isConnected;
+          home._d2 = _dev2.isConnected;
+        });
+      }
+    });
 
     // Auto-connect saved devices (no await to avoid delaying first build)
     _dev1.loadSavedAndAutoConnect();
@@ -204,6 +230,10 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _dev2LogSub?.cancel();
     _dev1.dispose();
     _dev2.dispose();
+    // Also cancel AppBar listeners if set
+    final home = context.findAncestorStateOfType<_MyHomePageState>();
+    home?._dev1Conn?.cancel();
+    home?._dev2Conn?.cancel();
     super.dispose();
   }
 }

@@ -20,10 +20,16 @@ class ManagedMeshtasticDevice {
   String? selectedDeviceId;
   meshtastic_ble.BleService? _ble;
   StreamSubscription<String>? _bleLogSub;
+  StreamSubscription<bool>? _connSub;
   final StreamController<String> _logController =
       StreamController<String>.broadcast();
+  final StreamController<bool> _connectedController =
+      StreamController<bool>.broadcast();
+  bool _isConnected = false;
 
   Stream<String> get logs => _logController.stream;
+  Stream<bool> get connected => _connectedController.stream;
+  bool get isConnected => _isConnected;
 
   /// Ensure minimum permissions needed to connect on Android. No-ops elsewhere.
   Future<bool> ensurePermissions() async {
@@ -56,6 +62,13 @@ class ManagedMeshtasticDevice {
       _logController.add('[$label] $line');
     });
 
+    // Forward connection state
+    _connSub = _ble!.connection.listen((c) {
+      _isConnected = c;
+      _connectedController.add(c);
+      _logController.add('[$label] ${c ? 'Connected' : 'Disconnected'}');
+    });
+
     try {
       await _ble!.connect();
     } catch (e) {
@@ -83,6 +96,10 @@ class ManagedMeshtasticDevice {
       _bleLogSub?.cancel();
     } catch (_) {}
     _bleLogSub = null;
+    try {
+      _connSub?.cancel();
+    } catch (_) {}
+    _connSub = null;
     _ble?.dispose();
     _ble = null;
   }
@@ -113,5 +130,6 @@ class ManagedMeshtasticDevice {
   void dispose() {
     _disposeBleOnly();
     _logController.close();
+    _connectedController.close();
   }
 }

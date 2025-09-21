@@ -23,8 +23,13 @@ class BleService {
   StreamSubscription<bool>? _connectionSub;
 
   final StreamController<String> _logController = StreamController.broadcast();
+  final StreamController<bool> _connectionStateController =
+      StreamController<bool>.broadcast();
+  bool _isConnected = false;
 
   Stream<String> get logs => _logController.stream;
+  Stream<bool> get connection => _connectionStateController.stream;
+  bool get isConnected => _isConnected;
 
   BleService(this.deviceId);
 
@@ -41,6 +46,9 @@ class BleService {
     try {
       await UniversalBle.connect(deviceId);
       _logController.add('connect: connect() completed');
+      // Immediately mark as connected; some platforms may delay connection stream events
+      _isConnected = true;
+      _connectionStateController.add(true);
     } catch (e) {
       _logController.add('connect: connect() failed: $e');
       rethrow;
@@ -116,6 +124,8 @@ class BleService {
         UniversalBle.connectionStream(deviceId).listen((connected) {
       _logController
           .add('Connection state: ${connected ? 'connected' : 'disconnected'}');
+      _isConnected = connected;
+      _connectionStateController.add(connected);
     });
 
     // After establishing connection and subscribing, request the full config
@@ -145,6 +155,10 @@ class BleService {
     _fromNumSub?.cancel();
     _logSub?.cancel();
     _connectionSub?.cancel();
+    _isConnected = false;
+    try {
+      _connectionStateController.add(false);
+    } catch (_) {}
     try {
       _logController.add('disconnect: unsubscribing from fromRadio');
       await UniversalBle.unsubscribe(
@@ -254,5 +268,6 @@ class BleService {
     _logSub?.cancel();
     _connectionSub?.cancel();
     _logController.close();
+    _connectionStateController.close();
   }
 }
