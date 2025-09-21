@@ -26,6 +26,10 @@ class ManagedMeshtasticDevice {
   final StreamController<bool> _connectedController =
       StreamController<bool>.broadcast();
   bool _isConnected = false;
+  bool _autoReconnectEnabled = false;
+  bool _reconnectLoopRunning = false;
+  int _reconnectAttempt = 0;
+  bool _connecting = false;
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
@@ -56,6 +60,8 @@ class ManagedMeshtasticDevice {
     selectedDeviceId = deviceId;
     _disposeBleOnly();
     _ble = meshtastic_ble.BleService(deviceId);
+    _autoReconnectEnabled = true; // enable auto-reconnect for this selection
+    _reconnectAttempt = 0; // reset backoff sequence for a new target
 
     // Forward logs with label prefix
     _bleLogSub = _ble!.logs.listen((line) {
@@ -67,17 +73,29 @@ class ManagedMeshtasticDevice {
       _isConnected = c;
       _connectedController.add(c);
       _logController.add('[$label] ${c ? 'Connected' : 'Disconnected'}');
+      if (!c && _autoReconnectEnabled && selectedDeviceId != null) {
+        _scheduleReconnect();
+      }
     });
 
     try {
+      _connecting = true;
       await _ble!.connect();
     } catch (e) {
       _logController.add('[$label] Connect error: $e');
-      rethrow;
+      // Do not throw; schedule reconnect attempts
+      if (_autoReconnectEnabled && selectedDeviceId != null) {
+        _scheduleReconnect();
+      }
+    } finally {
+      _connecting = false;
     }
   }
 
   Future<void> disconnect({bool clearSaved = true}) async {
+    // Manual disconnect should disable auto-reconnect
+    _autoReconnectEnabled = false;
+    _reconnectLoopRunning = false;
     if (_ble != null) {
       try {
         await _ble!.disconnect();
@@ -125,6 +143,82 @@ class ManagedMeshtasticDevice {
       return;
     }
     await connectTo(id);
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectLoopRunning) return;
+    if (!_autoReconnectEnabled) return;
+    if (selectedDeviceId == null) return;
+    _reconnectLoopRunning = true;
+    _reconnectAttempt = 0;
+    _logController.add('[$label] Scheduling auto-reconnect');
+    // fire and forget
+    _runReconnectLoop();
+  }
+
+  Duration _backoffForAttempt(int attempt) {
+    // 2s, 5s, 10s, 20s, max 30s
+    final secs = [2, 5, 10, 20, 30];
+    final idx = attempt < secs.length ? attempt : secs.length - 1;
+    return Duration(seconds: secs[idx]);
+  }
+
+  Future<void> _runReconnectLoop() async {
+    while (_reconnectLoopRunning && _autoReconnectEnabled) {
+      if (_isConnected) break;
+      if (selectedDeviceId == null) break;
+
+      final delay = _backoffForAttempt(_reconnectAttempt++);
+      _logController.add(
+          '[$label] Reconnect attempt ${_reconnectAttempt}, waiting ${delay.inSeconds}s');
+      await Future.delayed(delay);
+
+      if (!_autoReconnectEnabled || selectedDeviceId == null || _isConnected) {
+        break;
+      }
+
+      final granted = await ensurePermissions();
+      if (!granted) {
+        _logController.add('[$label] Permissions missing; will retry later');
+        continue;
+      }
+
+      try {
+        if (_connecting) {
+          _logController
+              .add('[$label] Already connecting; skipping this attempt');
+          continue;
+        }
+        _connecting = true;
+        if (_ble == null) {
+          _logController
+              .add('[$label] Recreating BLE service and reconnecting');
+          _ble = meshtastic_ble.BleService(selectedDeviceId!);
+          _bleLogSub = _ble!.logs.listen((line) {
+            _logController.add('[$label] $line');
+          });
+          _connSub = _ble!.connection.listen((c) {
+            _isConnected = c;
+            _connectedController.add(c);
+            _logController.add('[$label] ${c ? 'Connected' : 'Disconnected'}');
+            if (!c && _autoReconnectEnabled && selectedDeviceId != null) {
+              _scheduleReconnect();
+            }
+          });
+        }
+        _logController
+            .add('[$label] Attempting reconnect to $selectedDeviceId');
+        await _ble!.connect();
+      } catch (e) {
+        _logController.add('[$label] Reconnect failed: $e');
+      } finally {
+        _connecting = false;
+      }
+    }
+    _reconnectLoopRunning = false;
+    if (_isConnected) {
+      _logController.add('[$label] Auto-reconnect succeeded');
+    }
   }
 
   void dispose() {
