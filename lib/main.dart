@@ -116,6 +116,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   StreamSubscription<String>? _dev2LogSub;
   StreamSubscription<void>? _dev1StatsSub;
   StreamSubscription<void>? _dev2StatsSub;
+  StreamSubscription<void>? _dev1InfoSub;
+  StreamSubscription<void>? _dev2InfoSub;
   final ScrollController _logScrollController = ScrollController();
   static const _prefsKey1 = 'selectedDeviceId1';
   static const _prefsKey2 = 'selectedDeviceId2';
@@ -157,6 +159,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     // Stats listeners to refresh table
     _dev1StatsSub = _dev1.statsChanged.listen((_) => setState(() {}));
     _dev2StatsSub = _dev2.statsChanged.listen((_) => setState(() {}));
+    _dev1InfoSub = _dev1.infoChanged.listen((_) => setState(() {}));
+    _dev2InfoSub = _dev2.infoChanged.listen((_) => setState(() {}));
   }
 
   void _appendLog(String line) {
@@ -263,6 +267,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     final home = context.findAncestorStateOfType<_MyHomePageState>();
     home?._dev1Conn?.cancel();
     home?._dev2Conn?.cancel();
+    _dev1InfoSub?.cancel();
+    _dev2InfoSub?.cancel();
     super.dispose();
   }
 
@@ -448,15 +454,13 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     final cellPad = const EdgeInsets.symmetric(vertical: 4, horizontal: 8);
 
     final ids = <int>{}
-      ..addAll(_dev1.sortedChannelIds)
-      ..addAll(_dev2.sortedChannelIds);
+      ..addAll(_dev1.sortedChannelIndices)
+      ..addAll(_dev2.sortedChannelIndices);
     final sortedIds = ids.toList()..sort();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Node numbers'),
-        const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
@@ -467,11 +471,9 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  'Device 1: '
-                  '${_dev1.myNodeNum == null ? 'Unknown' : '${_dev1.myNodeNum} (${_dev1.myNodeNumHex})'}',
+                  '${_dev1.myNodeNum == null ? 'Unknown' : '${_dev1.myNodeNum}\n${_dev1.myNodeNumHex}'}',
                   style: cellTextStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                   softWrap: false,
                 ),
               ),
@@ -485,11 +487,9 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  'Device 2: '
-                  '${_dev2.myNodeNum == null ? 'Unknown' : '${_dev2.myNodeNum} (${_dev2.myNodeNumHex})'}',
+                  '${_dev2.myNodeNum == null ? 'Unknown' : '${_dev2.myNodeNum}\n${_dev2.myNodeNumHex}'}',
                   style: cellTextStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                   softWrap: false,
                 ),
               ),
@@ -497,7 +497,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
           ],
         ),
         const SizedBox(height: 16),
-        Text('Channels (by ID)'),
+        Text('Channels'),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
@@ -508,14 +508,14 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
             children: [
               Row(children: [
                 Expanded(
-                  flex: 4,
+                  flex: 1,
                   child: Padding(
                     padding: cellPad,
                     child: Text(
-                      'Channel ID',
+                      '#',
                       style: headerStyle,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      overflow: TextOverflow.visible,
                       softWrap: false,
                     ),
                   ),
@@ -556,13 +556,13 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                 )
               else
                 ...sortedIds.map((id) {
-                  final n1 = _dev1.channelNameForId(id) ?? '';
-                  final n2 = _dev2.channelNameForId(id) ?? '';
+                  final n1 = _dev1.channelNameForIndex(id) ?? '';
+                  final n2 = _dev2.channelNameForIndex(id) ?? '';
                   return Column(
                     children: [
                       Row(children: [
                         Expanded(
-                          flex: 4,
+                          flex: 1,
                           child: Padding(
                             padding: cellPad,
                             child: Text(

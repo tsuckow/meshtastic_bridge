@@ -51,16 +51,16 @@ class ManagedMeshtasticDevice {
       ? null
       : '0x${_myNodeNum!.toRadixString(16).toUpperCase()}';
 
-  final Map<int, ChannelInfo> _channelsById = <int, ChannelInfo>{};
-  Map<int, String> get channelNamesById => Map.unmodifiable(
-      {for (final e in _channelsById.entries) e.key: e.value.name});
-  List<int> get sortedChannelIds {
-    final ids = _channelsById.keys.toList();
+  final Map<int, ChannelInfo> _channelsByIndex = <int, ChannelInfo>{};
+  Map<int, String> get channelNamesByIndex => Map.unmodifiable(
+      {for (final e in _channelsByIndex.entries) e.key: e.value.name});
+  List<int> get sortedChannelIndices {
+    final ids = _channelsByIndex.keys.toList();
     ids.sort();
     return ids;
   }
 
-  String? channelNameForId(int id) => _channelsById[id]?.name;
+  String? channelNameForIndex(int index) => _channelsByIndex[index]?.name;
 
   final StreamController<void> _infoController =
       StreamController<void>.broadcast();
@@ -153,15 +153,16 @@ class ManagedMeshtasticDevice {
         }
         if (msg.hasChannel()) {
           final ch = msg.channel;
-          if (ch.hasSettings() && ch.settings.hasId()) {
-            final id = ch.settings.id;
+          // Use Channel.index, defaulting to 0 if not set
+          final index = ch.hasIndex() ? ch.index : 0;
+          if (ch.hasSettings()) {
             final name = ch.settings.hasName() ? ch.settings.name : '';
             final psk = ch.settings.hasPsk()
                 ? List<int>.from(ch.settings.psk)
                 : <int>[];
-            final existing = _channelsById[id];
+            final existing = _channelsByIndex[index];
             if (existing == null || existing.name != name) {
-              _channelsById[id] = ChannelInfo(name: name, psk: psk);
+              _channelsByIndex[index] = ChannelInfo(name: name, psk: psk);
               changed = true;
             } else if (!_listEquals(existing.psk, psk)) {
               existing.psk = psk;
