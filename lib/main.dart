@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:english_words/english_words.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:universal_ble/universal_ble.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'services/ble_service.dart' as meshtastic_ble;
+import 'widgets/ble_device_picker_button.dart';
 
-const String meshtasticServiceUuid = '6ba1b218-15a8-461f-9fa8-5dcae273eafd';
+// Meshtastic BLE service UUID is defined in the reusable picker; not needed here directly.
 
 void main() => runApp(const MyApp());
 
@@ -65,15 +65,11 @@ class BleDeviceSelector extends StatefulWidget {
 }
 
 class _BleDeviceSelectorState extends State<BleDeviceSelector> {
-  StreamSubscription<BleDevice>? _scanSub;
-  List<BleDevice> _devices = [];
-  bool _scanning = false;
   String? _selectedDeviceId;
   meshtastic_ble.BleService? _bleService;
   List<String> _logs = [];
   StreamSubscription<String>? _logSub;
   final ScrollController _logScrollController = ScrollController();
-  void Function(VoidCallback fn)? _modalSetState;
 
   static const _prefsKeySelectedDevice = 'selectedDeviceId';
 
@@ -135,76 +131,23 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     });
   }
 
-  Future<void> _startScan() async {
-    if (_scanning) return; // already scanning
-    final granted = await _ensurePermissions();
-    if (!granted) {
-      setState(() => _scanning = false);
-      _modalSetState?.call(() {});
-      return;
-    }
-    setState(() {
-      _scanning = true;
-      _devices = [];
-    });
-    _modalSetState?.call(() {});
-
-    try {
-      try {
-        final systemDevices = await UniversalBle.getSystemDevices(
-            withServices: [meshtasticServiceUuid]);
-        for (final d in systemDevices) {
-          if (!_devices.any((e) => e.deviceId == d.deviceId)) _devices.add(d);
-        }
-      } catch (_) {}
-      await UniversalBle.startScan(
-        scanFilter: ScanFilter(withServices: [meshtasticServiceUuid]),
-      );
-    } catch (_) {}
-
-    _scanSub = UniversalBle.scanStream.listen((device) {
-      // Rely on startScan filter by service; don't double-filter here as some platforms
-      // don't populate advertisement services consistently.
-      if (!_devices.any((d) => d.deviceId == device.deviceId)) {
-        setState(() => _devices.add(device));
-        _modalSetState?.call(() {});
-      }
-    }, onError: (_) {
-      setState(() => _scanning = false);
-      _modalSetState?.call(() {});
-    }, onDone: () {
-      setState(() => _scanning = false);
-      _modalSetState?.call(() {});
-    });
-  }
-
   Future<bool> _ensurePermissions() async {
     if (Theme.of(context).platform == TargetPlatform.android) {
       final statuses = await [
         Permission.bluetooth,
-        Permission.bluetoothScan,
         Permission.bluetoothConnect,
         Permission.locationWhenInUse,
       ].request();
 
-      final scanGranted = statuses[Permission.bluetoothScan]?.isGranted ?? false;
-      final connectGranted = statuses[Permission.bluetoothConnect]?.isGranted ?? false;
-      final bluetoothGranted = statuses[Permission.bluetooth]?.isGranted ?? false;
-      final locationGranted = statuses[Permission.locationWhenInUse]?.isGranted ?? false;
-
-      return scanGranted || bluetoothGranted || locationGranted || connectGranted;
+      final connectGranted =
+          statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+      final bluetoothGranted =
+          statuses[Permission.bluetooth]?.isGranted ?? false;
+      final locationGranted =
+          statuses[Permission.locationWhenInUse]?.isGranted ?? false;
+      return connectGranted || bluetoothGranted || locationGranted;
     }
     return true;
-  }
-
-  Future<void> _stopScan() async {
-    await UniversalBle.stopScan();
-    try {
-      await _scanSub?.cancel();
-      _scanSub = null;
-    } catch (_) {}
-    setState(() => _scanning = false);
-    _modalSetState?.call(() {});
   }
 
   @override
@@ -216,7 +159,11 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
           children: [
             Expanded(
               child: _selectedDeviceId == null
-                  ? ElevatedButton(onPressed: _showDevicePicker, child: Text('Select device'))
+                  ? BleDevicePickerButton(
+                      onDeviceSelected: (deviceId) async {
+                        await _connectToDeviceId(deviceId);
+                      },
+                    )
                   : ElevatedButton.icon(
                       onPressed: () async {
                         try {
@@ -232,7 +179,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                       },
                       icon: Icon(Icons.power_settings_new),
                       label: Text('Disconnect'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.redAccent),
                     ),
             ),
           ],
@@ -259,71 +207,10 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
 
   @override
   void dispose() {
-    try {
-      _scanSub?.cancel();
-    } catch (_) {}
-    UniversalBle.stopScan();
     _logScrollController.dispose();
     _logSub?.cancel();
     _bleService?.dispose();
     super.dispose();
-  }
-
-  void _showDevicePicker() async {
-    // Begin scanning, then show the modal.
-    _startScan();
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            _modalSetState = setModalState;
-            return SizedBox(
-              height: 400,
-              child: Column(
-                children: [
-                  if (_scanning)
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-                          SizedBox(width: 8),
-                          Text('Scanning...')
-                        ],
-                      ),
-                    ),
-                  Expanded(
-                    child: _devices.isEmpty
-                        ? Center(child: Text(_scanning ? 'Scanning for devices...' : 'No devices found.'))
-                        : ListView.builder(
-                            itemCount: _devices.length,
-                            itemBuilder: (context, idx) {
-                              final d = _devices[idx];
-                              final title = (d.name != null && d.name!.isNotEmpty) ? d.name! : d.deviceId;
-                              return ListTile(
-                                title: Text(title),
-                                subtitle: Text(d.deviceId),
-                                onTap: () async {
-                                  Navigator.of(context).pop();
-                                  await _connectToDeviceId(d.deviceId);
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    // Stop scanning when the modal closes.
-    await _stopScan();
   }
 
   Future<void> _connectToDeviceId(String id) async {
@@ -346,4 +233,3 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     }
   }
 }
-
