@@ -17,29 +17,20 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => MyAppState(),
-      child: MaterialApp(
-        title: 'Meshtastic Bridge',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
-        ),
-        home: MyHomePage(),
+    return MaterialApp(
+      title: 'Meshtastic Bridge',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
       ),
+      home: MyHomePage(),
     );
   }
-}
-
-class MyAppState extends ChangeNotifier {
-  var current = WordPair.random();
 }
 
 class MyHomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    var appState = context.watch<MyAppState>();
-
     return Scaffold(
       appBar: AppBar(title: Text('Meshtastic Bridge')),
       body: Padding(
@@ -47,9 +38,6 @@ class MyHomePage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('A random idea:'),
-            Text(appState.current.asLowerCase),
-            SizedBox(height: 24),
             Text('Select a BLE device:'),
             BleDeviceSelector(),
           ],
