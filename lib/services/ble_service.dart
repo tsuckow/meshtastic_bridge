@@ -185,7 +185,8 @@ class BleService {
         if (v.hasData()) {
           final env = mqtt.ServiceEnvelope.fromBuffer(v.data);
           try {
-            _logController.add('MQTT envelope json: ${jsonEncode(env.toProto3Json())}');
+            _logController
+                .add('MQTT envelope json: ${jsonEncode(env.toProto3Json())}');
           } catch (e) {
             _logController.add('MQTT envelope: ${env.packet}');
           }
