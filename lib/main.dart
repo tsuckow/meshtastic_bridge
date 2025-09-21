@@ -1,14 +1,10 @@
 import 'dart:async';
 
-import 'package:english_words/english_words.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'services/ble_service.dart' as meshtastic_ble;
 import 'widgets/ble_device_picker_button.dart';
+import 'services/managed_meshtastic_device.dart';
 
-// Meshtastic BLE service UUID is defined in the reusable picker; not needed here directly.
+// Meshtastic BLE service UUID is defined in the reusable picker.
 
 void main() => runApp(const MyApp());
 
@@ -38,7 +34,7 @@ class MyHomePage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Select a BLE device:'),
+            Text('Select BLE devices:'),
             BleDeviceSelector(),
           ],
         ),
@@ -53,89 +49,44 @@ class BleDeviceSelector extends StatefulWidget {
 }
 
 class _BleDeviceSelectorState extends State<BleDeviceSelector> {
-  String? _selectedDeviceId;
-  meshtastic_ble.BleService? _bleService;
   List<String> _logs = [];
-  StreamSubscription<String>? _logSub;
+  late final ManagedMeshtasticDevice _dev1;
+  late final ManagedMeshtasticDevice _dev2;
+  StreamSubscription<String>? _dev1LogSub;
+  StreamSubscription<String>? _dev2LogSub;
   final ScrollController _logScrollController = ScrollController();
-
-  static const _prefsKeySelectedDevice = 'selectedDeviceId';
+  static const _prefsKey1 = 'selectedDeviceId1';
+  static const _prefsKey2 = 'selectedDeviceId2';
 
   @override
   void initState() {
     super.initState();
-    _maybeAutoConnect();
+    _dev1 = ManagedMeshtasticDevice(prefsKey: _prefsKey1, label: 'Device 1');
+    _dev2 = ManagedMeshtasticDevice(prefsKey: _prefsKey2, label: 'Device 2');
+
+    // Merge device logs into UI log pane
+    _dev1LogSub = _dev1.logs.listen(_appendLog);
+    _dev2LogSub = _dev2.logs.listen(_appendLog);
+
+    // Auto-connect saved devices (no await to avoid delaying first build)
+    _dev1.loadSavedAndAutoConnect();
+    _dev2.loadSavedAndAutoConnect();
   }
 
-  Future<void> _saveSelectedDevice(String? id) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (id == null) {
-      await prefs.remove(_prefsKeySelectedDevice);
-    } else {
-      await prefs.setString(_prefsKeySelectedDevice, id);
-    }
-  }
-
-  Future<void> _maybeAutoConnect() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_prefsKeySelectedDevice);
-    if (id != null) {
-      setState(() {
-        _selectedDeviceId = id;
-        _logs = [];
-      });
-
-      final granted = await _ensurePermissions();
-      if (!granted) return;
-
-      _bleService?.dispose();
-      _logSub?.cancel();
-      _bleService = meshtastic_ble.BleService(id);
-      _attachLogListener(_bleService!);
-
-      try {
-        await _bleService!.connect();
-      } catch (e) {
-        setState(() => _logs.add('Auto-connect error: $e'));
-      }
-    }
-  }
-
-  void _attachLogListener(meshtastic_ble.BleService svc) {
-    _logSub = svc.logs.listen((line) {
-      setState(() {
-        _logs.add(line);
-        if (_logs.length > 500) _logs.removeAt(0);
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_logScrollController.hasClients) {
-          _logScrollController.animateTo(
-            _logScrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      });
+  void _appendLog(String line) {
+    setState(() {
+      _logs.add(line);
+      if (_logs.length > 500) _logs.removeAt(0);
     });
-  }
-
-  Future<bool> _ensurePermissions() async {
-    if (Theme.of(context).platform == TargetPlatform.android) {
-      final statuses = await [
-        Permission.bluetooth,
-        Permission.bluetoothConnect,
-        Permission.locationWhenInUse,
-      ].request();
-
-      final connectGranted =
-          statuses[Permission.bluetoothConnect]?.isGranted ?? false;
-      final bluetoothGranted =
-          statuses[Permission.bluetooth]?.isGranted ?? false;
-      final locationGranted =
-          statuses[Permission.locationWhenInUse]?.isGranted ?? false;
-      return connectGranted || bluetoothGranted || locationGranted;
-    }
-    return true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   @override
@@ -143,33 +94,72 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Device 1 controls
         Row(
           children: [
             Expanded(
-              child: _selectedDeviceId == null
-                  ? BleDevicePickerButton(
-                      onDeviceSelected: (deviceId) async {
-                        await _connectToDeviceId(deviceId);
-                      },
-                    )
-                  : ElevatedButton.icon(
-                      onPressed: () async {
-                        try {
-                          await _bleService?.disconnect();
-                        } catch (_) {}
-                        _bleService?.dispose();
-                        await _logSub?.cancel();
-                        setState(() {
-                          _selectedDeviceId = null;
-                          _logs = [];
-                        });
-                        await _saveSelectedDevice(null);
-                      },
-                      icon: Icon(Icons.power_settings_new),
-                      label: Text('Disconnect'),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent),
-                    ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Device 1'),
+                  SizedBox(height: 6),
+                  _dev1.selectedDeviceId == null
+                      ? BleDevicePickerButton(
+                          onDeviceSelected: (deviceId) async {
+                            final ok = await _dev1.ensurePermissions();
+                            if (!ok) return;
+                            await _dev1.connectTo(deviceId);
+                            setState(() {});
+                          },
+                        )
+                      : ElevatedButton.icon(
+                          onPressed: () async {
+                            await _dev1.disconnect(clearSaved: true);
+                            setState(() {});
+                          },
+                          icon: Icon(Icons.power_settings_new),
+                          label: Text('Disconnect (${_dev1.selectedDeviceId})'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                          ),
+                        ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 12),
+        // Device 2 controls
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Device 2'),
+                  SizedBox(height: 6),
+                  _dev2.selectedDeviceId == null
+                      ? BleDevicePickerButton(
+                          onDeviceSelected: (deviceId) async {
+                            final ok = await _dev2.ensurePermissions();
+                            if (!ok) return;
+                            await _dev2.connectTo(deviceId);
+                            setState(() {});
+                          },
+                        )
+                      : ElevatedButton.icon(
+                          onPressed: () async {
+                            await _dev2.disconnect(clearSaved: true);
+                            setState(() {});
+                          },
+                          icon: Icon(Icons.power_settings_new),
+                          label: Text('Disconnect (${_dev2.selectedDeviceId})'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                          ),
+                        ),
+                ],
+              ),
             ),
           ],
         ),
@@ -196,28 +186,10 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   @override
   void dispose() {
     _logScrollController.dispose();
-    _logSub?.cancel();
-    _bleService?.dispose();
+    _dev1LogSub?.cancel();
+    _dev2LogSub?.cancel();
+    _dev1.dispose();
+    _dev2.dispose();
     super.dispose();
-  }
-
-  Future<void> _connectToDeviceId(String id) async {
-    setState(() {
-      _selectedDeviceId = id;
-      _logs = [];
-    });
-
-    await _saveSelectedDevice(id);
-
-    _bleService?.dispose();
-    await _logSub?.cancel();
-    _bleService = meshtastic_ble.BleService(id);
-    _attachLogListener(_bleService!);
-
-    try {
-      await _bleService!.connect();
-    } catch (e) {
-      setState(() => _logs.add('Connect error: $e'));
-    }
   }
 }
