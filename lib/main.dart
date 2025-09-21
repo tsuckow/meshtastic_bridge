@@ -179,6 +179,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
 
   @override
   Widget build(BuildContext context) {
+    final logTextStyle =
+        Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -199,13 +201,16 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
           height: 200,
           decoration: BoxDecoration(border: Border.all(color: Colors.grey)),
           child: _logs.isEmpty
-              ? Padding(padding: EdgeInsets.all(8), child: Text('No logs yet.'))
+              ? Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Text('No logs yet.', style: logTextStyle),
+                )
               : ListView.builder(
                   controller: _logScrollController,
                   itemCount: _logs.length,
                   itemBuilder: (context, idx) => Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    child: Text(_logs[idx]),
+                    child: Text(_logs[idx], style: logTextStyle),
                   ),
                 ),
         ),
