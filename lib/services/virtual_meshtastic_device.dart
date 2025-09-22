@@ -30,7 +30,7 @@ class VirtualMeshtasticDevice {
   VirtualMeshtasticDevice({
     required this.prefsKey,
     required this.label,
-    this.port = 4242,
+    this.port = 4403,
   });
 
   final String prefsKey; // namespace for persisted identity
