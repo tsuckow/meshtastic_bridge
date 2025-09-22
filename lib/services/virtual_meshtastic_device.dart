@@ -217,24 +217,49 @@ class VirtualMeshtasticDevice {
   }
 
   void _onClientData(List<int> data) {
-    _log('Got Packet: ${data.length} bytes');
-    _handleToRadio(data);
-    // _rxBuffer.add(Uint8List.fromList(data));
-    // final bytes = _rxBuffer.toBytes();
-    // int offset = 0;
-    // while (bytes.length - offset >= 4) {
-    //   final length = _readU32BE(bytes, offset);
-    //   if (bytes.length - offset - 4 < length) break; // wait for more
-    //   final msgBytes = bytes.sublist(offset + 4, offset + 4 + length);
-    //   offset += 4 + length;
-    //   _handleToRadio(Uint8List.fromList(msgBytes));
-    // }
-    // // keep only the remaining unread bytes
-    // final remaining = bytes.length - offset;
-    // _rxBuffer.clear();
-    // if (remaining > 0) {
-    //   _rxBuffer.add(bytes.sublist(offset));
-    // }
+    _log("packet");
+
+    _rxBuffer.add(Uint8List.fromList(data));
+    while (true) {
+      final buf = _rxBuffer.toBytes();
+      final remaining = buf.length;
+      // Need at least 4 bytes for header (magic 2 + len 2)
+      if (remaining < 4) break;
+
+      if (buf[0] != 0x94) {
+        _log('Desync: expected magic 0x94, got 0x${buf[0].toRadixString(16)}');
+        _rxBuffer.clear();
+        _rxBuffer.add(buf.sublist(1));
+        continue;
+      }
+
+      if (buf[1] != 0xC3) {
+        _log('Desync: expected magic 0xC3, got 0x${buf[1].toRadixString(16)}');
+        _rxBuffer.clear();
+        _rxBuffer.add(buf.sublist(2));
+        continue;
+      }
+
+      final lenHi = buf[2];
+      final lenLo = buf[3];
+      final payloadLen = ((lenHi & 0xFF) << 8) | (lenLo & 0xFF);
+      _log(
+          'Header parsed: len=$payloadLen (0x${payloadLen.toRadixString(16)})');
+      if (remaining < payloadLen + 4) {
+        _log('Need ${payloadLen + 4 - remaining} more bytes');
+        // Not enough bytes for payload yet
+        break;
+      }
+
+      final start = 4;
+      final end = start + payloadLen;
+      final msgBytes = buf.sublist(start, end);
+      _log('Got frame: $payloadLen bytes');
+      _log('Frame hex ($payloadLen bytes):\n${_hexDump(msgBytes)}');
+      _handleToRadio(msgBytes);
+      _rxBuffer.clear();
+      _rxBuffer.add(buf.sublist(end));
+    }
   }
 
   void _handleToRadio(List<int> msgBytes) {
@@ -247,14 +272,16 @@ class VirtualMeshtasticDevice {
         case mesh.ToRadio_PayloadVariant.packet:
           if (to.hasPacket()) {
             final pkt = to.packet;
-            if (pkt.whichPayloadVariant() ==
-                mesh.MeshPacket_PayloadVariant.encrypted) {
+            final isEnc = pkt.whichPayloadVariant() ==
+                mesh.MeshPacket_PayloadVariant.encrypted;
+            final bytesToDump = isEnc ? pkt.encrypted : pkt.writeToBuffer();
+            _log(
+                'Received ${isEnc ? 'encrypted' : 'plain'} MeshPacket (len=${bytesToDump.length})');
+            _log(
+                'Packet hex (${bytesToDump.length} bytes):\n${_hexDump(bytesToDump)}');
+            if (isEnc) {
               // Surface encrypted packet to app-facing stream
               _encryptedPacketController.add(pkt);
-              _log(
-                  'Received encrypted MeshPacket (len=${pkt.encrypted.length})');
-            } else {
-              _log('Ignoring non-encrypted MeshPacket');
             }
           }
         case mesh.ToRadio_PayloadVariant.disconnect:
@@ -270,6 +297,17 @@ class VirtualMeshtasticDevice {
     } catch (e) {
       _log('Failed to parse ToRadio: $e');
     }
+  }
+
+  String _hexDump(List<int> bytes, {int bytesPerLine = 16}) {
+    if (bytes.isEmpty) return '';
+    final sb = StringBuffer();
+    for (var i = 0; i < bytes.length; i++) {
+      if (i > 0) sb.write(i % bytesPerLine == 0 ? '\n' : ' ');
+      final b = bytes[i] & 0xFF;
+      sb.write(b.toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
   }
 
   void _sendInitialConfigAndComplete(int requestId) {
@@ -292,9 +330,9 @@ class VirtualMeshtasticDevice {
 
   void _sendFromRadio(mesh.FromRadio msg) {
     final bytes = msg.writeToBuffer();
-    final lengthPrefix = _u32be(bytes.length);
     try {
-      _client?.add(lengthPrefix);
+      // Meshtastic framing: 0x95 0xC3 then 16-bit length (big-endian by default)
+      _client?.add([0x95, 0xC3, ..._u16be(bytes.length)]);
       _client?.add(bytes);
       _client?.flush();
       _log('Sent FromRadio: ${msg.whichPayloadVariant()}');
@@ -303,13 +341,9 @@ class VirtualMeshtasticDevice {
     }
   }
 
-  int _readU32BE(List<int> b, int off) {
-    return (b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3];
-  }
+  // (u32 helpers removed; using Meshtastic framing marker + u16 length)
 
-  List<int> _u32be(int v) => [
-        (v >> 24) & 0xFF,
-        (v >> 16) & 0xFF,
+  List<int> _u16be(int v) => [
         (v >> 8) & 0xFF,
         v & 0xFF,
       ];
