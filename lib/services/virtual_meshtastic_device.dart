@@ -12,9 +12,9 @@ import '../generated/protos/meshtastic/channel.pb.dart' as chpb;
 
 /// Virtual Meshtastic device that emulates the BLE PhoneAPI over a simple TCP socket.
 ///
-/// Protocol framing:
-/// - Incoming data (from client) must be a sequence of frames: [u32_be length][ToRadio bytes]
-/// - Outgoing data (to client) are frames: [u32_be length][FromRadio bytes]
+/// Protocol framing (Meshtastic client API):
+/// - Incoming data (from client) must be a sequence of frames: [0x94, 0xC3][u16_be length][ToRadio bytes]
+/// - Outgoing data (to client) are frames: [0x94, 0xC3][u16_be length][FromRadio bytes]
 ///
 /// Behavior:
 /// - Accepts only one client at a time. A new connection closes the previous one.
@@ -206,7 +206,10 @@ class VirtualMeshtasticDevice {
     _log(
         'Client connected from ${client.remoteAddress.address}:${client.remotePort}');
 
-    _clientSub = client.listen(_onClientData,
+    _clientSub = client.listen(
+        (data) async {
+          await _onClientData(data);
+        },
         onError: (e) => _log('Client error: $e'),
         onDone: () {
           _log('Client disconnected');
@@ -216,7 +219,7 @@ class VirtualMeshtasticDevice {
         });
   }
 
-  void _onClientData(List<int> data) {
+  Future<void> _onClientData(List<int> data) async {
     _log("packet");
 
     _rxBuffer.add(Uint8List.fromList(data));
@@ -256,19 +259,19 @@ class VirtualMeshtasticDevice {
       final msgBytes = buf.sublist(start, end);
       _log('Got frame: $payloadLen bytes');
       _log('Frame hex ($payloadLen bytes):\n${_hexDump(msgBytes)}');
-      _handleToRadio(msgBytes);
+      await _handleToRadio(msgBytes);
       _rxBuffer.clear();
       _rxBuffer.add(buf.sublist(end));
     }
   }
 
-  void _handleToRadio(List<int> msgBytes) {
+  Future<void> _handleToRadio(List<int> msgBytes) async {
     try {
       final to = mesh.ToRadio.fromBuffer(msgBytes);
       switch (to.whichPayloadVariant()) {
         case mesh.ToRadio_PayloadVariant.wantConfigId:
           _log('Received wantConfigId: ${to.wantConfigId}');
-          _sendInitialConfigAndComplete(to.wantConfigId);
+          await _sendInitialConfigAndComplete(to.wantConfigId);
         case mesh.ToRadio_PayloadVariant.packet:
           if (to.hasPacket()) {
             final pkt = to.packet;
@@ -310,32 +313,39 @@ class VirtualMeshtasticDevice {
     return sb.toString();
   }
 
-  void _sendInitialConfigAndComplete(int requestId) {
+  Future<void> _sendInitialConfigAndComplete(int requestId) async {
     // MyNodeInfo
-    final info = mesh.MyNodeInfo(myNodeNum: _nodeId ?? 0);
+    final info = mesh.MyNodeInfo(
+        myNodeNum: _nodeId ?? 0, deviceId: _uniqueId12, minAppVersion: 30200);
     final fr1 = mesh.FromRadio()..myInfo = info;
-    _sendFromRadio(fr1);
+    await _sendFromRadio(fr1);
 
     // Send channels by index
     for (final entry in _channels.entries) {
       final ch = chpb.Channel(index: entry.key, settings: entry.value);
       final fr = mesh.FromRadio()..channel = ch;
-      _sendFromRadio(fr);
+      await _sendFromRadio(fr);
     }
 
     // Config complete (echo request id)
     final frDone = mesh.FromRadio()..configCompleteId = requestId;
-    _sendFromRadio(frDone);
+    await _sendFromRadio(frDone);
   }
 
-  void _sendFromRadio(mesh.FromRadio msg) {
+  Future<void> _sendFromRadio(mesh.FromRadio msg) async {
     final bytes = msg.writeToBuffer();
     try {
-      // Meshtastic framing: 0x95 0xC3 then 16-bit length (big-endian by default)
-      _client?.add([0x95, 0xC3, ..._u16be(bytes.length)]);
+      // Meshtastic framing: 0x94 0xC3 then 16-bit length (big-endian)
+      _client?.add([0x94, 0xC3, ..._u16be(bytes.length)]);
       _client?.add(bytes);
-      _client?.flush();
-      _log('Sent FromRadio: ${msg.whichPayloadVariant()}');
+      await _client?.flush();
+      // Log JSON-serialized FromRadio for visibility
+      try {
+        final jsonText = jsonEncode(msg.toProto3Json());
+        _log('Sent FromRadio json: $jsonText');
+      } catch (_) {
+        _log('Sent FromRadio: ${msg.whichPayloadVariant()}');
+      }
     } catch (e) {
       _log('Failed to send FromRadio: $e');
     }
