@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../generated/protos/meshtastic/mesh.pb.dart' as mesh;
 import '../generated/protos/meshtastic/channel.pb.dart' as chpb;
+import '../generated/protos/meshtastic/config.pb.dart' as config;
 
 /// Virtual Meshtastic device that emulates the BLE PhoneAPI over a simple TCP socket.
 ///
@@ -320,9 +321,31 @@ class VirtualMeshtasticDevice {
     final fr1 = mesh.FromRadio()..myInfo = info;
     await _sendFromRadio(fr1);
 
-    // Send channels by index
-    for (final entry in _channels.entries) {
-      final ch = chpb.Channel(index: entry.key, settings: entry.value);
+    // Also provide a NodeInfo entry for our own node number
+    // Attach a basic User derived from our identity
+    final idStr =
+        '!${(_nodeId ?? 0).toRadixString(16).padLeft(8, '0').toLowerCase()}';
+
+    final user = mesh.User(
+      id: idStr,
+      longName: "Virtual TODO",
+      shortName: "V",
+      publicKey: _publicKey,
+      role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+    );
+    final selfNode = mesh.NodeInfo(
+      num: _nodeId ?? 0,
+      user: user,
+      isFavorite: true,
+      lastHeard: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    );
+    final frNode = mesh.FromRadio()..nodeInfo = selfNode;
+    await _sendFromRadio(frNode);
+
+    // Send all 8 channels (0..7). Include empty channels if not configured.
+    for (int i = 0; i < 8; i++) {
+      final settings = _channels[i];
+      final ch = chpb.Channel(index: i, settings: settings);
       final fr = mesh.FromRadio()..channel = ch;
       await _sendFromRadio(fr);
     }
