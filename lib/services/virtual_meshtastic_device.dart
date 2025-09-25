@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../generated/protos/meshtastic/mesh.pb.dart' as mesh;
 import '../generated/protos/meshtastic/channel.pb.dart' as chpb;
 import '../generated/protos/meshtastic/config.pb.dart' as config;
+import '../generated/protos/meshtastic/portnums.pbenum.dart' as ports;
 
 /// Virtual Meshtastic device that emulates the BLE PhoneAPI over a simple TCP socket.
 ///
@@ -139,7 +140,7 @@ class VirtualMeshtasticDevice {
       _channels[0] = chpb.ChannelSettings(
         name: 'Virtual',
         psk: psk,
-        id: 0, // id unused here
+        id: 1,
       );
     }
   }
@@ -327,12 +328,12 @@ class VirtualMeshtasticDevice {
         '!${(_nodeId ?? 0).toRadixString(16).padLeft(8, '0').toLowerCase()}';
 
     final user = mesh.User(
-      id: idStr,
-      longName: "Virtual TODO",
-      shortName: "V",
-      publicKey: _publicKey,
-      role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
-    );
+        id: idStr,
+        longName: "Virtual TODO",
+        shortName: "V",
+        publicKey: _publicKey,
+        role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+        hwModel: mesh.HardwareModel.PRIVATE_HW);
     final selfNode = mesh.NodeInfo(
       num: _nodeId ?? 0,
       user: user,
@@ -342,10 +343,35 @@ class VirtualMeshtasticDevice {
     final frNode = mesh.FromRadio()..nodeInfo = selfNode;
     await _sendFromRadio(frNode);
 
+    // Send device metadata after node info
+    final meta = mesh.DeviceMetadata(
+      firmwareVersion: '2.7.0virtual',
+      deviceStateVersion: 24,
+      canShutdown: false,
+      hasWifi: false,
+      hasBluetooth: false,
+      hasEthernet: true,
+      role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+      positionFlags: 0,
+      hwModel: mesh.HardwareModel.PRIVATE_HW,
+      hasPKC: true,
+      excludedModules: 20864,
+    );
+    final frMeta = mesh.FromRadio()..metadata = meta;
+    await _sendFromRadio(frMeta);
+
     // Send all 8 channels (0..7). Include empty channels if not configured.
     for (int i = 0; i < 8; i++) {
       final settings = _channels[i];
-      final ch = chpb.Channel(index: i, settings: settings);
+      final ch = chpb.Channel(
+        index: i,
+        settings: settings ?? chpb.ChannelSettings(),
+        role: i == 0
+            ? chpb.Channel_Role.PRIMARY
+            : (settings != null
+                ? chpb.Channel_Role.SECONDARY
+                : chpb.Channel_Role.DISABLED),
+      );
       final fr = mesh.FromRadio()..channel = ch;
       await _sendFromRadio(fr);
     }
@@ -353,6 +379,29 @@ class VirtualMeshtasticDevice {
     // Config complete (echo request id)
     final frDone = mesh.FromRadio()..configCompleteId = requestId;
     await _sendFromRadio(frDone);
+
+    // After config complete, send a sample decoded text message on channel 0 from a test node
+    // Build a Data payload for TEXT_MESSAGE_APP with UTF-8 text
+    final text = 'Hello from virtual test node';
+    final data = mesh.Data(
+      portnum: ports.PortNum.TEXT_MESSAGE_APP,
+      payload: utf8.encode(text),
+      wantResponse: false,
+    );
+    // Construct a MeshPacket as if received from a neighbor test node
+    final testFrom = (_nodeId ?? 0) ^ 0x010203; // stable non-equal test node id
+    final pkt = mesh.MeshPacket(
+      from: testFrom,
+      to: 0xFFFFFFFF, // broadcast
+      channel: 0, // primary channel
+      decoded: data,
+      id: Random().nextInt(0x7FFFFFFF),
+      rxTime: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      hopLimit: 0,
+      wantAck: false,
+    );
+    final frPkt = mesh.FromRadio()..packet = pkt;
+    await _sendFromRadio(frPkt);
   }
 
   Future<void> _sendFromRadio(mesh.FromRadio msg) async {
