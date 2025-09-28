@@ -282,8 +282,7 @@ class VirtualMeshtasticDevice {
             final bytesToDump = isEnc ? pkt.encrypted : pkt.writeToBuffer();
             _log(
                 'Received ${isEnc ? 'encrypted' : 'plain'} MeshPacket (len=${bytesToDump.length})');
-            _log(
-                'Packet hex (${bytesToDump.length} bytes):\n${_hexDump(bytesToDump)}');
+            _log('Packet ${jsonEncode(pkt.toProto3Json())}');
             if (isEnc) {
               // Surface encrypted packet to app-facing stream
               _encryptedPacketController.add(pkt);
