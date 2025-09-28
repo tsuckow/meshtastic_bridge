@@ -1388,6 +1388,14 @@ const ToRadio$json = {
       '9': 0,
       '10': 'heartbeat'
     },
+    {
+      '1': 'set_promiscuous',
+      '3': 8,
+      '4': 1,
+      '5': 8,
+      '9': 0,
+      '10': 'setPromiscuous'
+    },
   ],
   '8': [
     {'1': 'payload_variant'},
@@ -1402,7 +1410,8 @@ final $typed_data.Uint8List toRadioDescriptor = $convert.base64Decode(
     'ljLlhNb2RlbUgAUgx4bW9kZW1QYWNrZXQSXAoWbXF0dENsaWVudFByb3h5TWVzc2FnZRgGIAEo'
     'CzIiLm1lc2h0YXN0aWMuTXF0dENsaWVudFByb3h5TWVzc2FnZUgAUhZtcXR0Q2xpZW50UHJveH'
     'lNZXNzYWdlEjUKCWhlYXJ0YmVhdBgHIAEoCzIVLm1lc2h0YXN0aWMuSGVhcnRiZWF0SABSCWhl'
-    'YXJ0YmVhdEIRCg9wYXlsb2FkX3ZhcmlhbnQ=');
+    'YXJ0YmVhdBIpCg9zZXRfcHJvbWlzY3VvdXMYCCABKAhIAFIOc2V0UHJvbWlzY3VvdXNCEQoPcG'
+    'F5bG9hZF92YXJpYW50');
 
 @$core.Deprecated('Use compressedDescriptor instead')
 const Compressed$json = {

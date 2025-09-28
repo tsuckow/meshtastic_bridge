@@ -3416,6 +3416,7 @@ enum ToRadio_PayloadVariant {
   xmodemPacket,
   mqttClientProxyMessage,
   heartbeat,
+  setPromiscuous,
   notSet
 }
 
@@ -3430,6 +3431,7 @@ class ToRadio extends $pb.GeneratedMessage {
     $4.XModem? xmodemPacket,
     MqttClientProxyMessage? mqttClientProxyMessage,
     Heartbeat? heartbeat,
+    $core.bool? setPromiscuous,
   }) {
     final result = create();
     if (packet != null) result.packet = packet;
@@ -3439,6 +3441,7 @@ class ToRadio extends $pb.GeneratedMessage {
     if (mqttClientProxyMessage != null)
       result.mqttClientProxyMessage = mqttClientProxyMessage;
     if (heartbeat != null) result.heartbeat = heartbeat;
+    if (setPromiscuous != null) result.setPromiscuous = setPromiscuous;
     return result;
   }
 
@@ -3459,13 +3462,14 @@ class ToRadio extends $pb.GeneratedMessage {
     5: ToRadio_PayloadVariant.xmodemPacket,
     6: ToRadio_PayloadVariant.mqttClientProxyMessage,
     7: ToRadio_PayloadVariant.heartbeat,
+    8: ToRadio_PayloadVariant.setPromiscuous,
     0: ToRadio_PayloadVariant.notSet
   };
   static final $pb.BuilderInfo _i = $pb.BuilderInfo(
       _omitMessageNames ? '' : 'ToRadio',
       package: const $pb.PackageName(_omitMessageNames ? '' : 'meshtastic'),
       createEmptyInstance: create)
-    ..oo(0, [1, 3, 4, 5, 6, 7])
+    ..oo(0, [1, 3, 4, 5, 6, 7, 8])
     ..aOM<MeshPacket>(1, _omitFieldNames ? '' : 'packet',
         subBuilder: MeshPacket.create)
     ..a<$core.int>(
@@ -3479,6 +3483,7 @@ class ToRadio extends $pb.GeneratedMessage {
         subBuilder: MqttClientProxyMessage.create)
     ..aOM<Heartbeat>(7, _omitFieldNames ? '' : 'heartbeat',
         subBuilder: Heartbeat.create)
+    ..aOB(8, _omitFieldNames ? '' : 'setPromiscuous')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -3585,6 +3590,19 @@ class ToRadio extends $pb.GeneratedMessage {
   void clearHeartbeat() => $_clearField(7);
   @$pb.TagNumber(7)
   Heartbeat ensureHeartbeat() => $_ensure(5);
+
+  ///
+  ///  Set or clear promiscuous capture mode for LoRa RX.
+  ///  If true, the device will forward all received LoRa packets to FromRadio as encrypted MeshPacket payloads,
+  ///  and will avoid additionally sending the decrypted copies. This is primarily intended for serial sniffing.
+  @$pb.TagNumber(8)
+  $core.bool get setPromiscuous => $_getBF(6);
+  @$pb.TagNumber(8)
+  set setPromiscuous($core.bool value) => $_setBool(6, value);
+  @$pb.TagNumber(8)
+  $core.bool hasSetPromiscuous() => $_has(6);
+  @$pb.TagNumber(8)
+  void clearSetPromiscuous() => $_clearField(8);
 }
 
 ///
