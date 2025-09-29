@@ -134,9 +134,16 @@ class BleService {
       _connectionStateController.add(connected);
     });
 
-    // After establishing connection and subscribing, request the full config
-    // by sending a ToRadio message with wantConfigId set to a random uint32.
+    // After establishing connection and subscribing, first enable promiscuous
+    // capture mode so we can see all LoRa RX traffic, then request full config.
     try {
+      // 1) Set promiscuous mode on
+      _logController.add('connect: enabling promiscuous mode');
+      final prom = mesh.ToRadio(setPromiscuous: true);
+      await writeToRadio(prom);
+      _logController.add('Sent setPromiscuous: true');
+
+      // 2) Request config with a random request id
       final rand = DateTime.now().millisecondsSinceEpoch & 0xffffffff;
       _logController.add('connect: preparing wantConfigId $rand');
       final toRadio = mesh.ToRadio(wantConfigId: rand);
@@ -144,14 +151,14 @@ class BleService {
       _logController.add('Sent wantConfigId: $rand');
       // Attempt to immediately read any config packets now that we've requested them.
       try {
-        _logController.add('connect: draining fromRadio after wantConfigId');
+        _logController.add('connect: draining fromRadio after setPromiscuous/wantConfigId');
         await _drainFromRadio();
         _logController.add('connect: finished draining fromRadio');
       } catch (e) {
         _logController.add('connect: draining fromRadio failed: $e');
       }
     } catch (e) {
-      _logController.add('Failed to send wantConfigId: $e');
+      _logController.add('Failed to send setPromiscuous/wantConfigId: $e');
     }
   }
 

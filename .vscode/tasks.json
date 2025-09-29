@@ -1,0 +1,13 @@
+{
+  // VS Code Tasks: generate Dart protobufs from meshtastic .proto files
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Generate Dart protos",
+      "type": "shell",
+      "command": "PATH=$PATH:~/.pub-cache/bin/ protoc --dart_out=lib/generated/protos/ --proto_path=protobufs protobufs/meshtastic/*.proto",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

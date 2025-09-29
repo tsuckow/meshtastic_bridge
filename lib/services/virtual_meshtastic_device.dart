@@ -291,6 +291,7 @@ class VirtualMeshtasticDevice {
         case mesh.ToRadio_PayloadVariant.disconnect:
           _log('Received disconnect request');
           _client?.destroy();
+        case mesh.ToRadio_PayloadVariant.setPromiscuous:
         case mesh.ToRadio_PayloadVariant.xmodemPacket:
         case mesh.ToRadio_PayloadVariant.mqttClientProxyMessage:
         case mesh.ToRadio_PayloadVariant.heartbeat:
