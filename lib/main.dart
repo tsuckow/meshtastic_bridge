@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'widgets/ble_device_picker_button.dart';
 import 'services/managed_meshtastic_device.dart';
 import 'services/virtual_meshtastic_device.dart';
+import 'services/encrypted_traffic_hub.dart';
 import 'generated/protos/meshtastic/portnums.pbenum.dart' as portnums;
 
 // Meshtastic BLE service UUID is defined in the reusable picker.
@@ -115,6 +116,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   late final ManagedMeshtasticDevice _dev1;
   late final ManagedMeshtasticDevice _dev2;
   late final VirtualMeshtasticDevice _virt;
+  EncryptedTrafficHub? _hub;
   StreamSubscription<String>? _dev1LogSub;
   StreamSubscription<String>? _dev2LogSub;
   StreamSubscription<String>? _virtLogSub;
@@ -135,6 +137,9 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _dev2 = ManagedMeshtasticDevice(prefsKey: _prefsKey2, label: 'Device 2');
     _virt =
         VirtualMeshtasticDevice(prefsKey: 'virtualDevice', label: 'Virtual');
+    // Hub will bridge encrypted packets among devices and virtual
+    _hub = EncryptedTrafficHub(
+        deviceA: _dev1, deviceB: _dev2, virtualDevice: _virt);
 
     // Merge device logs into UI log pane
     _dev1LogSub = _dev1.logs.listen(_appendLog);
@@ -167,6 +172,8 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
 
     // Start the virtual TCP server immediately
     unawaited(_virt.start());
+    // Start hub after virtual server start is triggered
+    _hub?.start();
     _virtConnSub = _virt.connected.listen((c) {
       if (mounted) setState(() => _virtConnected = c);
     });
@@ -354,6 +361,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _dev2.dispose();
     _virtConnSub?.cancel();
     _virt.dispose();
+    _hub?.dispose();
     // Also cancel AppBar listeners if set
     final home = context.findAncestorStateOfType<_MyHomePageState>();
     home?._dev1Conn?.cancel();

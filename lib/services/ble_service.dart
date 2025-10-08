@@ -151,7 +151,8 @@ class BleService {
       _logController.add('Sent wantConfigId: $rand');
       // Attempt to immediately read any config packets now that we've requested them.
       try {
-        _logController.add('connect: draining fromRadio after setPromiscuous/wantConfigId');
+        _logController.add(
+            'connect: draining fromRadio after setPromiscuous/wantConfigId');
         await _drainFromRadio();
         _logController.add('connect: finished draining fromRadio');
       } catch (e) {

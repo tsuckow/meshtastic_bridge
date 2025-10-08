@@ -423,6 +423,13 @@ class VirtualMeshtasticDevice {
     }
   }
 
+  /// Called by the bridging hub when a MeshPacket should be emitted to the
+  /// connected TCP client as a FromRadio.packet.
+  Future<void> handlePacketFromHub(mesh.MeshPacket pkt) async {
+    final fr = mesh.FromRadio()..packet = pkt;
+    await _sendFromRadio(fr);
+  }
+
   // (u32 helpers removed; using Meshtastic framing marker + u16 length)
 
   List<int> _u16be(int v) => [

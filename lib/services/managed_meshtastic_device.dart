@@ -29,6 +29,8 @@ class ManagedMeshtasticDevice {
       StreamController<String>.broadcast();
   final StreamController<bool> _connectedController =
       StreamController<bool>.broadcast();
+  final StreamController<mesh.MeshPacket> _encryptedController =
+    StreamController<mesh.MeshPacket>.broadcast();
   bool _isConnected = false;
   bool _autoReconnectEnabled = false;
   bool _reconnectLoopRunning = false;
@@ -69,6 +71,7 @@ class ManagedMeshtasticDevice {
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
   bool get isConnected => _isConnected;
+  Stream<mesh.MeshPacket> get encryptedPackets => _encryptedController.stream;
 
   /// Ensure minimum permissions needed to connect on Android. No-ops elsewhere.
   Future<bool> ensurePermissions() async {
@@ -119,6 +122,10 @@ class ManagedMeshtasticDevice {
         switch (pkt.whichPayloadVariant()) {
           case mesh.MeshPacket_PayloadVariant.encrypted:
             _encryptedPackets += 1;
+            // publish encrypted packets for bridging
+            try {
+              _encryptedController.add(pkt);
+            } catch (_) {}
             break;
           case mesh.MeshPacket_PayloadVariant.decoded:
             if (pkt.hasDecoded()) {
@@ -335,6 +342,25 @@ class ManagedMeshtasticDevice {
     _connectedController.close();
     _statsController.close();
     _infoController.close();
+    _encryptedController.close();
+  }
+
+  /// Send a MeshPacket to this device via BLE PhoneAPI.
+  /// Typically used for forwarding encrypted packets between devices.
+  Future<void> sendMeshPacket(mesh.MeshPacket pkt) async {
+    final svc = _ble;
+    if (svc == null) {
+      _logController.add('[$label] sendMeshPacket: BLE not connected');
+      throw StateError('BLE not connected');
+    }
+    try {
+      final to = mesh.ToRadio()..packet = pkt;
+      await svc.writeToRadio(to);
+      _logController.add('[$label] Forwarded MeshPacket to device');
+    } catch (e) {
+      _logController.add('[$label] Failed to forward MeshPacket: $e');
+      rethrow;
+    }
   }
 }
 
