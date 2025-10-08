@@ -11,6 +11,7 @@ import '../generated/protos/meshtastic/mesh.pb.dart' as mesh;
 import '../generated/protos/meshtastic/channel.pb.dart' as chpb;
 import '../generated/protos/meshtastic/config.pb.dart' as config;
 import '../generated/protos/meshtastic/portnums.pbenum.dart' as ports;
+import 'channel_hash_cache.dart';
 
 /// Virtual Meshtastic device that emulates the BLE PhoneAPI over a simple TCP socket.
 ///
@@ -63,6 +64,9 @@ class VirtualMeshtasticDevice {
   final _connectedController = StreamController<bool>.broadcast();
   final _encryptedPacketController =
       StreamController<mesh.MeshPacket>.broadcast();
+
+  // Channel hash cache (XOR-based) for up to 8 channels
+  final ChannelHashCache _chanHashCache = ChannelHashCache();
 
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
@@ -141,6 +145,16 @@ class VirtualMeshtasticDevice {
         name: 'Virtual',
         psk: psk,
         id: 1,
+      );
+      _channels[1] = chpb.ChannelSettings(
+        name: 'LongFast',
+        psk: base64Decode('AQ=='),
+        id: 2,
+      );
+      _channels[2] = chpb.ChannelSettings(
+        name: 'MeshOregon',
+        psk: base64Decode('AQ=='),
+        id: 3,
       );
     }
   }
@@ -404,6 +418,26 @@ class VirtualMeshtasticDevice {
     await _sendFromRadio(frPkt);
   }
 
+  void _maybeLogChannelHashMatch(mesh.MeshPacket pkt) {
+    try {
+      final chNum = pkt.channel & 0xFF; // candidate hash byte from packet
+      // Recompute expected hashes from known channel settings and compare
+      for (final entry in _channels.entries) {
+        final settings = entry.value;
+        final name = settings.hasName() ? settings.name : '';
+        final psk = settings.hasPsk() ? List<int>.from(settings.psk) : <int>[];
+        final h = _chanHashCache.getHash(name, psk);
+        _log('${name} = ${h}');
+        if (h == chNum) {
+          _log(
+              'Encrypted packet channel=${pkt.channel} hash match -> index=${entry.key} name="$name" hash=0x${h.toRadixString(16).padLeft(2, '0')}');
+        }
+      }
+    } catch (e) {
+      _log('Hash match check failed: $e');
+    }
+  }
+
   Future<void> _sendFromRadio(mesh.FromRadio msg) async {
     final bytes = msg.writeToBuffer();
     try {
@@ -427,6 +461,7 @@ class VirtualMeshtasticDevice {
   /// connected TCP client as a FromRadio.packet.
   Future<void> handlePacketFromHub(mesh.MeshPacket pkt) async {
     final fr = mesh.FromRadio()..packet = pkt;
+    _maybeLogChannelHashMatch(pkt);
     await _sendFromRadio(fr);
   }
 
