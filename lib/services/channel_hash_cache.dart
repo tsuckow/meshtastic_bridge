@@ -52,6 +52,20 @@ class ChannelHashCache {
     return psk;
   }
 
+  /// Expands the PSK to exactly [len] bytes by repeating or truncating
+  /// after applying [effectivePsk] rules.
+  static List<int> expandKey(List<int> psk, int len) {
+    final base = effectivePsk(psk);
+    if (base.length == len) return List<int>.from(base, growable: false);
+    if (base.length > len)
+      return List<int>.from(base.sublist(0, len), growable: false);
+    final out = <int>[];
+    while (out.length < len) {
+      out.addAll(base);
+    }
+    return List<int>.from(out.sublist(0, len), growable: false);
+  }
+
   /// Compute XOR hash (0..255) for a channel.
   static int computeHash(String name, List<int> psk) {
     int h = 0;

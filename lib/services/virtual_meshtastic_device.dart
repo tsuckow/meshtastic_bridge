@@ -238,49 +238,60 @@ class VirtualMeshtasticDevice {
         });
   }
 
+  bool _isProcessingData = false;
   Future<void> _onClientData(List<int> data) async {
     _log("packet");
 
     _rxBuffer.add(Uint8List.fromList(data));
-    while (true) {
-      final buf = _rxBuffer.toBytes();
-      final remaining = buf.length;
-      // Need at least 4 bytes for header (magic 2 + len 2)
-      if (remaining < 4) break;
 
-      if (buf[0] != 0x94) {
-        _log('Desync: expected magic 0x94, got 0x${buf[0].toRadixString(16)}');
+    if (_isProcessingData) return;
+    _isProcessingData = true;
+    try {
+      while (true) {
+        final buf = _rxBuffer.toBytes();
+        final remaining = buf.length;
+        // Need at least 4 bytes for header (magic 2 + len 2)
+        if (remaining < 4) break;
+
+        if (buf[0] != 0x94) {
+          _log(
+              'Desync: expected magic 0x94, got 0x${buf[0].toRadixString(16)}');
+          _rxBuffer.clear();
+          _rxBuffer.add(buf.sublist(1));
+          continue;
+        }
+
+        if (buf[1] != 0xC3) {
+          _log(
+              'Desync: expected magic 0xC3, got 0x${buf[1].toRadixString(16)}');
+          _rxBuffer.clear();
+          _rxBuffer.add(buf.sublist(2));
+          continue;
+        }
+
+        final lenHi = buf[2];
+        final lenLo = buf[3];
+        final payloadLen = ((lenHi & 0xFF) << 8) | (lenLo & 0xFF);
+        _log(
+            'Header parsed: len=$payloadLen (0x${payloadLen.toRadixString(16)})');
+        if (remaining < payloadLen + 4) {
+          _log('Need ${payloadLen + 4 - remaining} more bytes');
+          // Not enough bytes for payload yet
+          break;
+        }
+
+        //Atomic Operation
+        final start = 4;
+        final end = start + payloadLen;
+        final msgBytes = buf.sublist(start, end);
         _rxBuffer.clear();
-        _rxBuffer.add(buf.sublist(1));
-        continue;
+        _rxBuffer.add(buf.sublist(end));
+        //End Atomic Operation
+        _log('Got frame: $payloadLen bytes');
+        await _handleToRadio(msgBytes);
       }
-
-      if (buf[1] != 0xC3) {
-        _log('Desync: expected magic 0xC3, got 0x${buf[1].toRadixString(16)}');
-        _rxBuffer.clear();
-        _rxBuffer.add(buf.sublist(2));
-        continue;
-      }
-
-      final lenHi = buf[2];
-      final lenLo = buf[3];
-      final payloadLen = ((lenHi & 0xFF) << 8) | (lenLo & 0xFF);
-      _log(
-          'Header parsed: len=$payloadLen (0x${payloadLen.toRadixString(16)})');
-      if (remaining < payloadLen + 4) {
-        _log('Need ${payloadLen + 4 - remaining} more bytes');
-        // Not enough bytes for payload yet
-        break;
-      }
-
-      final start = 4;
-      final end = start + payloadLen;
-      final msgBytes = buf.sublist(start, end);
-      _log('Got frame: $payloadLen bytes');
-      _log('Frame hex ($payloadLen bytes):\n${_hexDump(msgBytes)}');
-      await _handleToRadio(msgBytes);
-      _rxBuffer.clear();
-      _rxBuffer.add(buf.sublist(end));
+    } finally {
+      _isProcessingData = false;
     }
   }
 
@@ -307,6 +318,24 @@ class VirtualMeshtasticDevice {
                 await _handleAdminData(data);
                 break;
               }
+              // Encrypt selected decoded payloads and forward to hub
+              if (data.portnum == ports.PortNum.TEXT_MESSAGE_APP ||
+                  data.portnum == ports.PortNum.NODEINFO_APP ||
+                  data.portnum == ports.PortNum.TRACEROUTE_APP) {
+                try {
+                  final encPkt = await _encryptForHub(pkt);
+                  if (encPkt != null) {
+                    _log(
+                        'Forwarding encrypted to hub; chan=0x${encPkt.channel.toRadixString(16)} id=0x${(encPkt.hasId() ? encPkt.id : 0).toRadixString(16)}');
+                    _encryptedPacketController.add(encPkt);
+                  } else {
+                    _log(
+                        'Encryption skipped: no channel or PSK for index ${pkt.channel}');
+                  }
+                } catch (e) {
+                  _log('Encrypt-to-hub error: $e');
+                }
+              }
             }
             if (isEnc) {
               // Surface encrypted packet to app-facing stream
@@ -327,6 +356,58 @@ class VirtualMeshtasticDevice {
     } catch (e) {
       _log('Failed to parse ToRadio: $e');
     }
+  }
+
+  Future<mesh.MeshPacket?> _encryptForHub(mesh.MeshPacket decodedPkt) async {
+    if (!decodedPkt.hasDecoded()) return null;
+    final idx = decodedPkt.channel; // local channel index
+    final settings = _channels[idx];
+    if (settings == null || !settings.hasPsk()) return null;
+
+    final name = settings.hasName() ? settings.name : '';
+    final psk = List<int>.from(settings.psk);
+    final hashByte = _chanHashCache.getHash(name, psk) & 0xFF;
+
+    final from = _nodeId ?? 0;
+    final id = decodedPkt.hasId() && decodedPkt.id != 0
+        ? decodedPkt.id
+        : Random.secure().nextInt(0x7FFFFFFF);
+
+    // Build nonce (16 bytes LE): [LE64(id)][LE32(from)][LE32(0)]
+    final id64le = _le64from32(id);
+    final from32le = _le32(from);
+    final nonce16 = Uint8List(16)
+      ..setRange(0, 8, id64le)
+      ..setRange(8, 12, from32le)
+      ..setRange(12, 16, const [0, 0, 0, 0]);
+
+    final effPsk = ChannelHashCache.effectivePsk(psk);
+    final use256 = effPsk.length >= 32;
+    final keyBytes = use256
+        ? ChannelHashCache.expandKey(psk, 32)
+        : ChannelHashCache.expandKey(psk, 16);
+
+    final aesCtr = use256
+        ? crypto.AesCtr.with256bits(macAlgorithm: crypto.MacAlgorithm.empty)
+        : crypto.AesCtr.with128bits(macAlgorithm: crypto.MacAlgorithm.empty);
+
+    final clear = decodedPkt.decoded.writeToBuffer();
+    _log(
+        'Encrypting for hub AES-CTR${use256 ? 256 : 128}: idx=$idx hash=0x${hashByte.toRadixString(16)} nonce=${_hexDump(nonce16)} clearLen=${clear.length}');
+    final box = await aesCtr.encrypt(
+      clear,
+      secretKey: crypto.SecretKey(keyBytes),
+      nonce: nonce16,
+    );
+    final ct = box.cipherText;
+
+    // Build encrypted MeshPacket for hub forwarding; channel is hash byte
+    final out = decodedPkt.deepCopy();
+    out.channel = hashByte;
+    out.clearDecoded();
+    out.encrypted = ct;
+
+    return out;
   }
 
   String _hexDump(List<int> bytes, {int bytesPerLine = 16}) {
