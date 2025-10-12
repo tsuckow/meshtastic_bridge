@@ -443,7 +443,7 @@ class VirtualMeshtasticDevice {
       _log('ADMIN_APP received: ${msg.whichPayloadVariant()}');
       switch (msg.whichPayloadVariant()) {
         case admin.AdminMessage_PayloadVariant.getChannelRequest:
-          final idx = msg.getChannelRequest;
+          final idx = msg.getChannelRequest - 1;
           final settings = _channels[idx] ?? chpb.ChannelSettings();
           final ch = chpb.Channel(
             index: idx,
