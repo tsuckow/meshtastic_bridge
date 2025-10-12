@@ -19,6 +19,39 @@ class ChannelHashCache {
   static const int capacity = 8;
   final List<ChannelHashEntry> _entries = <ChannelHashEntry>[];
 
+  // Default 15-byte prefix used by firmware when a single-byte PSK is provided.
+  // Effective 16-byte PSK becomes: defaultPrefix + [providedByte].
+  static const List<int> _defaultPskPrefix = <int>[
+    0xd4,
+    0xf1,
+    0xbb,
+    0x3a,
+    0x20,
+    0x29,
+    0x07,
+    0x59,
+    0xf0,
+    0xbc,
+    0xff,
+    0xab,
+    0xcf,
+    0x4e,
+    0x69,
+  ];
+
+  /// Returns the effective PSK bytes used by Meshtastic firmware for hashing
+  /// and symmetric crypto.
+  ///
+  /// - If [psk] has length 1, returns the 16-byte sequence constructed by
+  ///   appending the provided byte to the firmware default prefix.
+  /// - Otherwise returns [psk] as-is (no copy).
+  static List<int> effectivePsk(List<int> psk) {
+    if (psk.length == 1) {
+      return <int>[..._defaultPskPrefix, psk[0] & 0xFF];
+    }
+    return psk;
+  }
+
   /// Compute XOR hash (0..255) for a channel.
   static int computeHash(String name, List<int> psk) {
     int h = 0;
@@ -26,34 +59,8 @@ class ChannelHashCache {
     for (final b in nameBytes) {
       h ^= (b & 0xFF);
     }
-    // If a single-byte PSK is provided, expand to the default 16-byte key
-    // pattern used in firmware, replacing the last byte with the provided one.
-    // default prefix (first 15 bytes) then provided byte as 16th:
-    // d4 f1 bb 3a 20 29 07 59 f0 bc ff ab cf 4e 69 <provided>
-    List<int> effectivePsk;
-    if (psk.length == 1) {
-      effectivePsk = [
-        0xd4,
-        0xf1,
-        0xbb,
-        0x3a,
-        0x20,
-        0x29,
-        0x07,
-        0x59,
-        0xf0,
-        0xbc,
-        0xff,
-        0xab,
-        0xcf,
-        0x4e,
-        0x69,
-        psk[0] & 0xFF
-      ];
-    } else {
-      effectivePsk = psk;
-    }
-    for (final b in effectivePsk) {
+    final epsk = effectivePsk(psk);
+    for (final b in epsk) {
       h ^= (b & 0xFF);
     }
     return h & 0xFF;

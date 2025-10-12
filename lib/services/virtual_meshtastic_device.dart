@@ -597,26 +597,6 @@ class VirtualMeshtasticDevice {
     }
   }
 
-  void _maybeLogChannelHashMatch(mesh.MeshPacket pkt) {
-    try {
-      final chNum = pkt.channel & 0xFF; // candidate hash byte from packet
-      // Recompute expected hashes from known channel settings and compare
-      for (final entry in _channels.entries) {
-        final settings = entry.value;
-        final name = settings.hasName() ? settings.name : '';
-        final psk = settings.hasPsk() ? List<int>.from(settings.psk) : <int>[];
-        final h = _chanHashCache.getHash(name, psk);
-        _log('${name} = ${h}');
-        if (h == chNum) {
-          _log(
-              'Encrypted packet channel=${pkt.channel} hash match -> index=${entry.key} name="$name" hash=0x${h.toRadixString(16).padLeft(2, '0')}');
-        }
-      }
-    } catch (e) {
-      _log('Hash match check failed: $e');
-    }
-  }
-
   Future<void> _sendFromRadio(mesh.FromRadio msg) async {
     final bytes = msg.writeToBuffer();
     try {
@@ -639,10 +619,122 @@ class VirtualMeshtasticDevice {
   /// Called by the bridging hub when a MeshPacket should be emitted to the
   /// connected TCP client as a FromRadio.packet.
   Future<void> handlePacketFromHub(mesh.MeshPacket pkt) async {
-    final fr = mesh.FromRadio()..packet = pkt;
-    _maybeLogChannelHashMatch(pkt);
-    await _sendFromRadio(fr);
+    // If this is an encrypted packet, see if we can identify the channel by hash
+    // and attempt to decrypt. If decryption succeeds, emit the decoded variant
+    // with the local channel index; otherwise, forward as-is.
+    if (pkt.whichPayloadVariant() == mesh.MeshPacket_PayloadVariant.encrypted) {
+      final hashByte = pkt.channel & 0xFF;
+      final match = _findChannelByHash(hashByte);
+      if (match != null) {
+        final idx = match.key;
+        final settings = match.value;
+        try {
+          final data = await _tryDecrypt(pkt, settings);
+          if (data != null) {
+            final decodedPkt = pkt.deepCopy();
+            decodedPkt.clearEncrypted();
+            decodedPkt.decoded = data;
+            decodedPkt.channel = idx; // for decoded, channel is local index
+
+            await _sendFromRadio(mesh.FromRadio()..packet = decodedPkt);
+            return;
+          }
+        } catch (e) {
+          _log('Decrypt attempt failed: $e');
+        }
+      }
+    }
+
+    // Default: forward packet unchanged
+    await _sendFromRadio(mesh.FromRadio()..packet = pkt);
   }
+
+  MapEntry<int, chpb.ChannelSettings>? _findChannelByHash(int hashByte) {
+    for (final entry in _channels.entries) {
+      final settings = entry.value;
+      final name = settings.hasName() ? settings.name : '';
+      final psk = settings.hasPsk() ? List<int>.from(settings.psk) : <int>[];
+      final h = _chanHashCache.getHash(name, psk);
+      if ((h & 0xFF) == (hashByte & 0xFF)) {
+        return MapEntry(entry.key, settings);
+      }
+    }
+    return null;
+  }
+
+  Future<mesh.Data?> _tryDecrypt(
+      mesh.MeshPacket pkt, chpb.ChannelSettings settings) async {
+    if (!pkt.hasEncrypted()) return null;
+    _log("Decrypt for ${settings.name}");
+    final enc = Uint8List.fromList(pkt.encrypted);
+    if (enc.isEmpty) {
+      _log('Decrypt skipped: empty ciphertext');
+      return null; // must have some ciphertext
+    }
+
+    final from = pkt.hasFrom() ? pkt.from : 0;
+    final id = pkt.hasId() ? pkt.id : 0;
+
+    // Prepare key material candidates using ChannelHashCache helpers
+    final rawPsk = settings.hasPsk() ? List<int>.from(settings.psk) : <int>[];
+    final effPsk = ChannelHashCache.effectivePsk(rawPsk);
+
+    // First, try AES-CTR as implemented in Meshtastic firmware.
+    // Nonce layout (16 bytes, little-endian):
+    // [0..7]  = LE64(packetId)
+    // [8..11] = LE32(fromNode)
+    // [12..15]= LE32(0) (counter starts from 0; firmware sets counter size to 4)
+    final id64le = _le64from32(id);
+    final from32le = _le32(from);
+    final nonce16 = Uint8List(16)
+      ..setRange(0, 8, id64le)
+      ..setRange(8, 12, from32le)
+      ..setRange(12, 16, const [0, 0, 0, 0]);
+
+    // Choose AES-CTR key size based on effective PSK size (firmware selects AES128 vs AES256 by key length)
+    final use256 = effPsk.length >= 32;
+    final aesCtr = use256
+        ? crypto.AesCtr.with256bits(macAlgorithm: crypto.MacAlgorithm.empty)
+        : crypto.AesCtr.with128bits(macAlgorithm: crypto.MacAlgorithm.empty);
+    _log(
+        'AES-CTR${use256 ? 256 : 128} try: nonce=${_hexDump(nonce16)} ctLen=${enc.length} pskLen=${effPsk.length} from=0x${from.toRadixString(16)} id=0x${id.toRadixString(16)}');
+    try {
+      final box = crypto.SecretBox(enc, nonce: nonce16, mac: crypto.Mac.empty);
+      final secretKey = crypto.SecretKey(effPsk);
+      final clear = await aesCtr.decrypt(box, secretKey: secretKey);
+      try {
+        return mesh.Data.fromBuffer(clear);
+      } catch (e) {
+        _log('AES-CTR parse Data failed (len=${clear.length}): $e');
+      }
+    } catch (e) {
+      _log('AES-CTR decrypt error: $e');
+    }
+    _log(
+        'Decrypt failed: AES-CTR${use256 ? 256 : 128} could not produce valid Data for ${settings.hasName() ? settings.name : '(unnamed)'}; ctLen=${enc.length} pskLen=${effPsk.length} from=0x${from.toRadixString(16)} id=0x${id.toRadixString(16)}');
+    return null;
+  }
+
+  // removed unused _expandKey; using ChannelHashCache.expandKey instead
+
+  Uint8List _le32(int v) => Uint8List.fromList([
+        v & 0xFF,
+        (v >> 8) & 0xFF,
+        (v >> 16) & 0xFF,
+        (v >> 24) & 0xFF,
+      ]);
+
+  // Build 8 little-endian bytes from a 32-bit id (upper 32 bits zero)
+  Uint8List _le64from32(int v32) => Uint8List.fromList([
+        v32 & 0xFF,
+        (v32 >> 8) & 0xFF,
+        (v32 >> 16) & 0xFF,
+        (v32 >> 24) & 0xFF,
+        0,
+        0,
+        0,
+        0,
+      ]);
 
   // (u32 helpers removed; using Meshtastic framing marker + u16 length)
 
