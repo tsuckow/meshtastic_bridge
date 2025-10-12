@@ -11,6 +11,7 @@ import '../generated/protos/meshtastic/mesh.pb.dart' as mesh;
 import '../generated/protos/meshtastic/channel.pb.dart' as chpb;
 import '../generated/protos/meshtastic/config.pb.dart' as config;
 import '../generated/protos/meshtastic/portnums.pbenum.dart' as ports;
+import '../generated/protos/meshtastic/admin.pb.dart' as admin;
 import 'channel_hash_cache.dart';
 
 /// Virtual Meshtastic device that emulates the BLE PhoneAPI over a simple TCP socket.
@@ -46,6 +47,8 @@ class VirtualMeshtasticDevice {
   crypto.SimpleKeyPairData? _ed25519KeyPair;
   List<int>? _publicKey; // 32 bytes
   String? _lastRemoteEndpoint; // last connected client's ip:port
+  mesh.User? _selfUser; // our current user/owner identity
+  Uint8List? _adminSessionPasskey; // session passkey for admin replies
 
   // Minimal channel config: index 0 with name and PSK
   final Map<int, chpb.ChannelSettings> _channels = {
@@ -297,6 +300,14 @@ class VirtualMeshtasticDevice {
             _log(
                 'Received ${isEnc ? 'encrypted' : 'plain'} MeshPacket (len=${bytesToDump.length})');
             _log('Packet ${jsonEncode(pkt.toProto3Json())}');
+            // Handle Admin app messages (decoded Data on ADMIN_APP port)
+            if (!isEnc && pkt.hasDecoded() && pkt.decoded.hasPayload()) {
+              final data = pkt.decoded;
+              if (data.portnum == ports.PortNum.ADMIN_APP) {
+                await _handleAdminData(data);
+                break;
+              }
+            }
             if (isEnc) {
               // Surface encrypted packet to app-facing stream
               _encryptedPacketController.add(pkt);
@@ -348,6 +359,7 @@ class VirtualMeshtasticDevice {
         publicKey: _publicKey,
         role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
         hwModel: mesh.HardwareModel.PRIVATE_HW);
+    _selfUser = user;
     final selfNode = mesh.NodeInfo(
       num: _nodeId ?? 0,
       user: user,
@@ -416,6 +428,173 @@ class VirtualMeshtasticDevice {
     );
     final frPkt = mesh.FromRadio()..packet = pkt;
     await _sendFromRadio(frPkt);
+  }
+
+  // Parse and respond to ADMIN_APP messages carried in decoded Data frames.
+  Future<void> _handleAdminData(mesh.Data data) async {
+    try {
+      final msg = admin.AdminMessage.fromBuffer(data.payload);
+      // Log full AdminMessage payload as JSON for visibility
+      try {
+        _log('ADMIN_APP json: ${jsonEncode(msg.toProto3Json())}');
+      } catch (_) {
+        // ignore JSON serialization errors
+      }
+      _log('ADMIN_APP received: ${msg.whichPayloadVariant()}');
+      switch (msg.whichPayloadVariant()) {
+        case admin.AdminMessage_PayloadVariant.getChannelRequest:
+          final idx = msg.getChannelRequest;
+          final settings = _channels[idx] ?? chpb.ChannelSettings();
+          final ch = chpb.Channel(
+            index: idx,
+            settings: settings,
+            role: idx == 0
+                ? chpb.Channel_Role.PRIMARY
+                : (settings.hasName() || settings.hasPsk()
+                    ? chpb.Channel_Role.SECONDARY
+                    : chpb.Channel_Role.DISABLED),
+          );
+          final resp = admin.AdminMessage(
+            getChannelResponse: ch,
+            sessionPasskey: _ensureAdminSessionPasskey(),
+          );
+          await _sendAdminResponse(resp);
+        case admin.AdminMessage_PayloadVariant.getOwnerRequest:
+          final owner = _selfUser ?? mesh.User();
+          final resp = admin.AdminMessage(
+            getOwnerResponse: owner,
+            sessionPasskey: _ensureAdminSessionPasskey(),
+          );
+          await _sendAdminResponse(resp);
+        case admin.AdminMessage_PayloadVariant.getConfigRequest:
+          // Only return Device Config for now
+          final dev = config.Config_DeviceConfig(
+            role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+          );
+          final cfg = config.Config()..device = dev;
+          final resp = admin.AdminMessage(
+            getConfigResponse: cfg,
+            sessionPasskey: _ensureAdminSessionPasskey(),
+          );
+          await _sendAdminResponse(resp);
+        case admin.AdminMessage_PayloadVariant.getDeviceMetadataRequest:
+          final meta = mesh.DeviceMetadata(
+            firmwareVersion: '2.7.0virtual',
+            deviceStateVersion: 24,
+            canShutdown: false,
+            hasWifi: false,
+            hasBluetooth: false,
+            hasEthernet: true,
+            role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+            positionFlags: 0,
+            hwModel: mesh.HardwareModel.PRIVATE_HW,
+            hasPKC: true,
+            excludedModules: 20864,
+          );
+          final resp = admin.AdminMessage(
+            getDeviceMetadataResponse: meta,
+            sessionPasskey: _ensureAdminSessionPasskey(),
+          );
+          await _sendAdminResponse(resp);
+        case admin.AdminMessage_PayloadVariant.setChannel:
+          if (!_validateAdminPasskey(msg.sessionPasskey)) {
+            _log('ADMIN_APP setChannel rejected: bad sessionPasskey');
+            break;
+          }
+          final newCh = msg.setChannel;
+          final idx = newCh.index;
+          _channels[idx] = newCh.settings;
+          // Emit FromRadio.channel update
+          final out = chpb.Channel(
+            index: idx,
+            settings: newCh.settings,
+            role: newCh.role,
+          );
+          await _sendFromRadio(mesh.FromRadio()..channel = out);
+          // Update hash cache
+          final name = out.settings.hasName() ? out.settings.name : '';
+          final psk = out.settings.hasPsk()
+              ? List<int>.from(out.settings.psk)
+              : <int>[];
+          _chanHashCache.getHash(name, psk);
+        case admin.AdminMessage_PayloadVariant.setOwner:
+          if (!_validateAdminPasskey(msg.sessionPasskey)) {
+            _log('ADMIN_APP setOwner rejected: bad sessionPasskey');
+            break;
+          }
+          _selfUser = msg.setOwner;
+          // Emit updated NodeInfo
+          final selfNode = mesh.NodeInfo(
+            num: _nodeId ?? 0,
+            user: _selfUser,
+            isFavorite: true,
+            lastHeard: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          );
+          await _sendFromRadio(mesh.FromRadio()..nodeInfo = selfNode);
+        case admin.AdminMessage_PayloadVariant.beginEditSettings:
+        case admin.AdminMessage_PayloadVariant.commitEditSettings:
+        case admin.AdminMessage_PayloadVariant.getModuleConfigRequest:
+        case admin.AdminMessage_PayloadVariant.setConfig:
+        case admin.AdminMessage_PayloadVariant.setModuleConfig:
+        case admin.AdminMessage_PayloadVariant
+              .getCannedMessageModuleMessagesRequest:
+        case admin.AdminMessage_PayloadVariant.getRingtoneRequest:
+        case admin.AdminMessage_PayloadVariant.getUiConfigRequest:
+        case admin.AdminMessage_PayloadVariant.getDeviceConnectionStatusRequest:
+        case admin.AdminMessage_PayloadVariant.keyVerification:
+        case admin.AdminMessage_PayloadVariant.factoryResetDevice:
+        case admin.AdminMessage_PayloadVariant.rebootSeconds:
+        case admin.AdminMessage_PayloadVariant.shutdownSeconds:
+        case admin.AdminMessage_PayloadVariant.factoryResetConfig:
+        case admin.AdminMessage_PayloadVariant.nodedbReset:
+        case admin.AdminMessage_PayloadVariant.notSet:
+        default:
+          _log('ADMIN_APP not implemented for ${msg.whichPayloadVariant()}');
+      }
+    } catch (e) {
+      _log('Failed to parse ADMIN_APP payload: $e');
+    }
+  }
+
+  List<int> _ensureAdminSessionPasskey() {
+    if (_adminSessionPasskey == null || _adminSessionPasskey!.isEmpty) {
+      final rng = Random.secure();
+      _adminSessionPasskey =
+          Uint8List.fromList(List<int>.generate(16, (_) => rng.nextInt(256)));
+    }
+    return _adminSessionPasskey!;
+  }
+
+  bool _validateAdminPasskey(List<int> provided) {
+    if (_adminSessionPasskey == null) return false;
+    if (provided.length != _adminSessionPasskey!.length) return false;
+    for (int i = 0; i < provided.length; i++) {
+      if ((provided[i] & 0xFF) != (_adminSessionPasskey![i] & 0xFF)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _sendAdminResponse(admin.AdminMessage resp) async {
+    try {
+      // Log the outgoing AdminMessage as JSON
+      try {
+        _log('ADMIN_APP response json: ${jsonEncode(resp.toProto3Json())}');
+      } catch (_) {
+        // ignore JSON serialization errors
+      }
+      final data = mesh.Data(
+        portnum: ports.PortNum.ADMIN_APP,
+        payload: resp.writeToBuffer(),
+      );
+      final pkt = mesh.MeshPacket(
+        decoded: data,
+      );
+      await _sendFromRadio(mesh.FromRadio()..packet = pkt);
+    } catch (e) {
+      _log('Failed to send ADMIN_APP response: $e');
+    }
   }
 
   void _maybeLogChannelHashMatch(mesh.MeshPacket pkt) {
