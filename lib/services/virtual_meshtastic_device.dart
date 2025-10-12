@@ -305,6 +305,22 @@ class VirtualMeshtasticDevice {
         case mesh.ToRadio_PayloadVariant.packet:
           if (to.hasPacket()) {
             final pkt = to.packet;
+
+            // Always acknowledge ToRadio.packet with a queueStatus response
+            try {
+              final q = mesh.QueueStatus(
+                res: 0, // OK
+                free: 7, // pretend there are free entries
+                maxlen: 8, // pretend total queue size
+                meshPacketId: pkt.hasId() ? pkt.id : 0,
+              );
+              _log(
+                  'Replying queueStatus: id=0x${q.meshPacketId.toRadixString(16)} free=${q.free}/${q.maxlen}');
+              await _sendFromRadio(mesh.FromRadio()..queueStatus = q);
+            } catch (e) {
+              _log('Failed to send queueStatus: $e');
+            }
+
             final isEnc = pkt.whichPayloadVariant() ==
                 mesh.MeshPacket_PayloadVariant.encrypted;
             final bytesToDump = isEnc ? pkt.encrypted : pkt.writeToBuffer();
@@ -404,6 +420,8 @@ class VirtualMeshtasticDevice {
     // Build encrypted MeshPacket for hub forwarding; channel is hash byte
     final out = decodedPkt.deepCopy();
     out.channel = hashByte;
+    out.from = from;
+    out.id = id;
     out.clearDecoded();
     out.encrypted = ct;
 
