@@ -566,17 +566,51 @@ class VirtualMeshtasticDevice {
           );
           await _sendAdminResponse(resp);
         case admin.AdminMessage_PayloadVariant.getConfigRequest:
-          // Only return Device Config for now
-          final dev = config.Config_DeviceConfig(
-            role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
-          );
-          final cfg = config.Config()..device = dev;
+          // Return specific config section based on request type
+          final req = msg.getConfigRequest;
+          config.Config cfg;
+          if (req == admin.AdminMessage_ConfigType.LORA_CONFIG) {
+            final lora = config.Config_LoRaConfig(
+              usePreset: true,
+              modemPreset: config.Config_LoRaConfig_ModemPreset.LONG_FAST,
+              region: config.Config_LoRaConfig_RegionCode.US,
+              hopLimit: 7,
+              txEnabled: true,
+              txPower: 30,
+              channelNum: 0,
+            );
+            cfg = (config.Config()..lora = lora);
+          } else {
+            // Default to Device Config for other/unspecified requests
+            final dev = config.Config_DeviceConfig(
+              role: config.Config_DeviceConfig_Role.CLIENT_MUTE,
+            );
+            cfg = (config.Config()..device = dev);
+          }
           final resp = admin.AdminMessage(
             getConfigResponse: cfg,
             sessionPasskey: _ensureAdminSessionPasskey(),
           );
           await _sendAdminResponse(resp);
         case admin.AdminMessage_PayloadVariant.getDeviceMetadataRequest:
+          List<mesh.ExcludedModules> excluded = [
+            mesh.ExcludedModules.EXCLUDED_NONE
+            // mesh.ExcludedModules.BLUETOOTH_CONFIG,
+            // mesh.ExcludedModules.AUDIO_CONFIG,
+            // mesh.ExcludedModules.AMBIENTLIGHTING_CONFIG,
+            // mesh.ExcludedModules.CANNEDMSG_CONFIG,
+            // mesh.ExcludedModules.DETECTIONSENSOR_CONFIG,
+            // mesh.ExcludedModules.EXTNOTIF_CONFIG,
+            // mesh.ExcludedModules.MQTT_CONFIG,
+            // mesh.ExcludedModules.NEIGHBORINFO_CONFIG,
+            // mesh.ExcludedModules.NETWORK_CONFIG,
+            // mesh.ExcludedModules.PAXCOUNTER_CONFIG,
+            // mesh.ExcludedModules.RANGETEST_CONFIG,
+            // mesh.ExcludedModules.REMOTEHARDWARE_CONFIG,
+            // mesh.ExcludedModules.SERIAL_CONFIG,
+            // mesh.ExcludedModules.STOREFORWARD_CONFIG,
+            // mesh.ExcludedModules.TELEMETRY_CONFIG,
+          ];
           final meta = mesh.DeviceMetadata(
             firmwareVersion: '2.7.0virtual',
             deviceStateVersion: 24,
@@ -588,7 +622,10 @@ class VirtualMeshtasticDevice {
             positionFlags: 0,
             hwModel: mesh.HardwareModel.PRIVATE_HW,
             hasPKC: true,
-            excludedModules: 20864,
+            // Modules to /include/ that are excluded by default
+            excludedModules: excluded.fold<int>(
+                mesh.ExcludedModules.EXCLUDED_NONE.value,
+                (acc, mod) => acc | mod.value),
           );
           final resp = admin.AdminMessage(
             getDeviceMetadataResponse: meta,
