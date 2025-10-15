@@ -342,7 +342,7 @@ class VirtualMeshtasticDevice {
                   final encPkt = await _encryptForHub(pkt);
                   if (encPkt != null) {
                     _log(
-                        'Forwarding encrypted to hub; chan=0x${encPkt.channel.toRadixString(16)} id=0x${(encPkt.hasId() ? encPkt.id : 0).toRadixString(16)}');
+                        'Forwarding encrypted to hub; chan=${encPkt.channel} id=0x${(encPkt.hasId() ? encPkt.id : 0).toRadixString(16)}');
                     _encryptedPacketController.add(encPkt);
                   } else {
                     _log(
@@ -396,12 +396,10 @@ class VirtualMeshtasticDevice {
       ..setRange(0, 8, id64le)
       ..setRange(8, 12, from32le)
       ..setRange(12, 16, const [0, 0, 0, 0]);
+    _log('D Nonce $nonce16');
 
     final effPsk = ChannelHashCache.effectivePsk(psk);
     final use256 = effPsk.length >= 32;
-    final keyBytes = use256
-        ? ChannelHashCache.expandKey(psk, 32)
-        : ChannelHashCache.expandKey(psk, 16);
 
     final aesCtr = use256
         ? crypto.AesCtr.with256bits(macAlgorithm: crypto.MacAlgorithm.empty)
@@ -412,7 +410,7 @@ class VirtualMeshtasticDevice {
         'Encrypting for hub AES-CTR${use256 ? 256 : 128}: idx=$idx hash=0x${hashByte.toRadixString(16)} nonce=${_hexDump(nonce16)} clearLen=${clear.length}');
     final box = await aesCtr.encrypt(
       clear,
-      secretKey: crypto.SecretKey(keyBytes),
+      secretKey: crypto.SecretKey(effPsk),
       nonce: nonce16,
     );
     final ct = box.cipherText;
@@ -422,6 +420,8 @@ class VirtualMeshtasticDevice {
     out.channel = hashByte;
     out.from = from;
     out.id = id;
+    out.hopLimit = 7;
+    out.hopStart = 7;
     out.clearDecoded();
     out.encrypted = ct;
 
@@ -505,28 +505,28 @@ class VirtualMeshtasticDevice {
     final frDone = mesh.FromRadio()..configCompleteId = requestId;
     await _sendFromRadio(frDone);
 
-    // After config complete, send a sample decoded text message on channel 0 from a test node
-    // Build a Data payload for TEXT_MESSAGE_APP with UTF-8 text
-    final text = 'Hello from virtual test node';
-    final data = mesh.Data(
-      portnum: ports.PortNum.TEXT_MESSAGE_APP,
-      payload: utf8.encode(text),
-      wantResponse: false,
-    );
-    // Construct a MeshPacket as if received from a neighbor test node
-    final testFrom = (_nodeId ?? 0) ^ 0x010203; // stable non-equal test node id
-    final pkt = mesh.MeshPacket(
-      from: testFrom,
-      to: 0xFFFFFFFF, // broadcast
-      channel: 0, // primary channel
-      decoded: data,
-      id: Random().nextInt(0x7FFFFFFF),
-      rxTime: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      hopLimit: 0,
-      wantAck: false,
-    );
-    final frPkt = mesh.FromRadio()..packet = pkt;
-    await _sendFromRadio(frPkt);
+    // // After config complete, send a sample decoded text message on channel 0 from a test node
+    // // Build a Data payload for TEXT_MESSAGE_APP with UTF-8 text
+    // final text = 'Hello from virtual test node';
+    // final data = mesh.Data(
+    //   portnum: ports.PortNum.TEXT_MESSAGE_APP,
+    //   payload: utf8.encode(text),
+    //   wantResponse: false,
+    // );
+    // // Construct a MeshPacket as if received from a neighbor test node
+    // final testFrom = (_nodeId ?? 0) ^ 0x010203; // stable non-equal test node id
+    // final pkt = mesh.MeshPacket(
+    //   from: testFrom,
+    //   to: 0xFFFFFFFF, // broadcast
+    //   channel: 0, // primary channel
+    //   decoded: data,
+    //   id: Random().nextInt(0x7FFFFFFF),
+    //   rxTime: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    //   hopLimit: 0,
+    //   wantAck: false,
+    // );
+    // final frPkt = mesh.FromRadio()..packet = pkt;
+    // await _sendFromRadio(frPkt);
   }
 
   // Parse and respond to ADMIN_APP messages carried in decoded Data frames.
@@ -762,6 +762,7 @@ class VirtualMeshtasticDevice {
       final hashByte = pkt.channel & 0xFF;
       final match = _findChannelByHash(hashByte);
       if (match != null) {
+        _log('Decrypt channel hash: ${pkt.channel}');
         final idx = match.key;
         final settings = match.value;
         try {
@@ -826,6 +827,7 @@ class VirtualMeshtasticDevice {
       ..setRange(0, 8, id64le)
       ..setRange(8, 12, from32le)
       ..setRange(12, 16, const [0, 0, 0, 0]);
+    _log('E Nonce $nonce16');
 
     // Choose AES-CTR key size based on effective PSK size (firmware selects AES128 vs AES256 by key length)
     final use256 = effPsk.length >= 32;
