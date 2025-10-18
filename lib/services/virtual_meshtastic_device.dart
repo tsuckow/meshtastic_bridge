@@ -240,7 +240,7 @@ class VirtualMeshtasticDevice {
 
   bool _isProcessingData = false;
   Future<void> _onClientData(List<int> data) async {
-    _log("packet");
+    //_log("packet");
 
     _rxBuffer.add(Uint8List.fromList(data));
 
@@ -272,10 +272,10 @@ class VirtualMeshtasticDevice {
         final lenHi = buf[2];
         final lenLo = buf[3];
         final payloadLen = ((lenHi & 0xFF) << 8) | (lenLo & 0xFF);
-        _log(
-            'Header parsed: len=$payloadLen (0x${payloadLen.toRadixString(16)})');
+        // _log(
+        //     'Header parsed: len=$payloadLen (0x${payloadLen.toRadixString(16)})');
         if (remaining < payloadLen + 4) {
-          _log('Need ${payloadLen + 4 - remaining} more bytes');
+          //_log('Need ${payloadLen + 4 - remaining} more bytes');
           // Not enough bytes for payload yet
           break;
         }
@@ -287,7 +287,7 @@ class VirtualMeshtasticDevice {
         _rxBuffer.clear();
         _rxBuffer.add(buf.sublist(end));
         //End Atomic Operation
-        _log('Got frame: $payloadLen bytes');
+        //_log('Got frame: $payloadLen bytes');
         await _handleToRadio(msgBytes);
       }
     } finally {
@@ -396,7 +396,7 @@ class VirtualMeshtasticDevice {
       ..setRange(0, 8, id64le)
       ..setRange(8, 12, from32le)
       ..setRange(12, 16, const [0, 0, 0, 0]);
-    _log('D Nonce $nonce16');
+    //_log('D Nonce $nonce16');
 
     final effPsk = ChannelHashCache.effectivePsk(psk);
     final use256 = effPsk.length >= 32;
@@ -406,8 +406,8 @@ class VirtualMeshtasticDevice {
         : crypto.AesCtr.with128bits(macAlgorithm: crypto.MacAlgorithm.empty);
 
     final clear = decodedPkt.decoded.writeToBuffer();
-    _log(
-        'Encrypting for hub AES-CTR${use256 ? 256 : 128}: idx=$idx hash=0x${hashByte.toRadixString(16)} nonce=${_hexDump(nonce16)} clearLen=${clear.length}');
+    // _log(
+    //     'Encrypting for hub AES-CTR${use256 ? 256 : 128}: idx=$idx hash=0x${hashByte.toRadixString(16)} nonce=${_hexDump(nonce16)} clearLen=${clear.length}');
     final box = await aesCtr.encrypt(
       clear,
       secretKey: crypto.SecretKey(effPsk),
@@ -802,7 +802,7 @@ class VirtualMeshtasticDevice {
   Future<mesh.Data?> _tryDecrypt(
       mesh.MeshPacket pkt, chpb.ChannelSettings settings) async {
     if (!pkt.hasEncrypted()) return null;
-    _log("Decrypt for ${settings.name}");
+    //_log("Decrypt for ${settings.name}");
     final enc = Uint8List.fromList(pkt.encrypted);
     if (enc.isEmpty) {
       _log('Decrypt skipped: empty ciphertext');
@@ -827,15 +827,15 @@ class VirtualMeshtasticDevice {
       ..setRange(0, 8, id64le)
       ..setRange(8, 12, from32le)
       ..setRange(12, 16, const [0, 0, 0, 0]);
-    _log('E Nonce $nonce16');
+    //_log('E Nonce $nonce16');
 
     // Choose AES-CTR key size based on effective PSK size (firmware selects AES128 vs AES256 by key length)
     final use256 = effPsk.length >= 32;
     final aesCtr = use256
         ? crypto.AesCtr.with256bits(macAlgorithm: crypto.MacAlgorithm.empty)
         : crypto.AesCtr.with128bits(macAlgorithm: crypto.MacAlgorithm.empty);
-    _log(
-        'AES-CTR${use256 ? 256 : 128} try: nonce=${_hexDump(nonce16)} ctLen=${enc.length} pskLen=${effPsk.length} from=0x${from.toRadixString(16)} id=0x${id.toRadixString(16)}');
+    // _log(
+    //     'AES-CTR${use256 ? 256 : 128} try: nonce=${_hexDump(nonce16)} ctLen=${enc.length} pskLen=${effPsk.length} from=0x${from.toRadixString(16)} id=0x${id.toRadixString(16)}');
     try {
       final box = crypto.SecretBox(enc, nonce: nonce16, mac: crypto.Mac.empty);
       final secretKey = crypto.SecretKey(effPsk);

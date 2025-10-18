@@ -317,11 +317,11 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                             final logTextStyle = Theme.of(context)
                                 .textTheme
                                 .bodySmall
-                                ?.copyWith(fontSize: 12);
+                                ?.copyWith(fontSize: 8);
                             final virtOnly = _virtlogs.toList();
                             return virtOnly.isEmpty
                                 ? Padding(
-                                    padding: const EdgeInsets.all(8),
+                                    padding: const EdgeInsets.all(4),
                                     child: Text('No virtual logs yet.',
                                         style: logTextStyle),
                                   )
@@ -330,7 +330,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
                                     itemCount: virtOnly.length,
                                     itemBuilder: (context, idx) => Padding(
                                       padding: const EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 2),
+                                          horizontal: 4, vertical: 0),
                                       child: Text(virtOnly[idx],
                                           style: logTextStyle),
                                     ),
