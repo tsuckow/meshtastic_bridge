@@ -71,6 +71,11 @@ class VirtualMeshtasticDevice {
   // Channel hash cache (XOR-based) for up to 8 channels
   final ChannelHashCache _chanHashCache = ChannelHashCache();
 
+  // Deduplication of packets received from hub (by MeshPacket.id) over a time window
+  // Maps packet id -> last seen epoch seconds
+  final Map<int, int> _recentHubPacketIds = <int, int>{};
+  static const int _dedupeWindowSecs = 10 * 60; // 10 minutes
+
   Stream<String> get logs => _logController.stream;
   Stream<bool> get connected => _connectedController.stream;
   Stream<mesh.MeshPacket> get encryptedPackets =>
@@ -755,6 +760,19 @@ class VirtualMeshtasticDevice {
   /// Called by the bridging hub when a MeshPacket should be emitted to the
   /// connected TCP client as a FromRadio.packet.
   Future<void> handlePacketFromHub(mesh.MeshPacket pkt) async {
+    // Drop duplicates by id within the dedupe window
+    final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    _recentHubPacketIds
+        .removeWhere((_, ts) => (nowSec - ts) > _dedupeWindowSecs);
+    final pktId = pkt.hasId() ? pkt.id : 0;
+    if (pktId != 0) {
+      if (_recentHubPacketIds.containsKey(pktId)) {
+        _log('Drop duplicate hub packet id=0x${pktId.toRadixString(16)}');
+        return; // duplicate, ignore
+      }
+      _recentHubPacketIds[pktId] = nowSec;
+    }
+
     // If this is an encrypted packet, see if we can identify the channel by hash
     // and attempt to decrypt. If decryption succeeds, emit the decoded variant
     // with the local channel index; otherwise, forward as-is.
@@ -768,6 +786,29 @@ class VirtualMeshtasticDevice {
         try {
           final data = await _tryDecrypt(pkt, settings);
           if (data != null) {
+            // Special-case self-origin packets: convert to a ROUTING_APP notice with requestId
+            final fromNode = pkt.hasFrom() ? pkt.from : 0;
+            if (_nodeId != null && fromNode == _nodeId) {
+              final routingData = mesh.Data(
+                portnum: ports.PortNum.ROUTING_APP,
+                payload: Uint8List(0),
+                requestId: pktId,
+              );
+              final routingPkt = mesh.MeshPacket(
+                from: fromNode,
+                to: pkt.hasTo() ? pkt.to : 0,
+                channel: idx,
+                decoded: routingData,
+                id: Random().nextInt(0x7FFFFFFF),
+                rxTime: pkt.hasRxTime() ? pkt.rxTime : null,
+                hopLimit: pkt.hasHopLimit() ? pkt.hopLimit : null,
+                hopStart: pkt.hasHopStart() ? pkt.hopStart : null,
+              );
+              await _sendFromRadio(mesh.FromRadio()..packet = routingPkt);
+              return;
+            }
+
+            // Normal path: forward decrypted decoded packet
             final decodedPkt = pkt.deepCopy();
             decodedPkt.clearEncrypted();
             decodedPkt.decoded = data;
