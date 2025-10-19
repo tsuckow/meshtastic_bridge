@@ -332,9 +332,10 @@ class VirtualMeshtasticDevice {
             _log(
                 'Received ${isEnc ? 'encrypted' : 'plain'} MeshPacket (len=${bytesToDump.length})');
             _log('Packet ${jsonEncode(pkt.toProto3Json())}');
-            // Handle Admin app messages (decoded Data on ADMIN_APP port)
-            if (!isEnc && pkt.hasDecoded() && pkt.decoded.hasPayload()) {
+
+            if (!isEnc && pkt.hasDecoded()) {
               final data = pkt.decoded;
+              // Handle Admin app messages (decoded Data on ADMIN_APP port)
               if (data.portnum == ports.PortNum.ADMIN_APP) {
                 await _handleAdminData(data);
                 break;
@@ -356,9 +357,13 @@ class VirtualMeshtasticDevice {
                 } catch (e) {
                   _log('Encrypt-to-hub error: $e');
                 }
+              } else {
+                _log(
+                    'Not sending to hub decoded Data on port ${data.portnum.name} ');
               }
             }
             if (isEnc) {
+              _log('Sending pre-encrypted packet to hub');
               // Surface encrypted packet to app-facing stream
               _encryptedPacketController.add(pkt);
             }
@@ -767,7 +772,7 @@ class VirtualMeshtasticDevice {
     final pktId = pkt.hasId() ? pkt.id : 0;
     if (pktId != 0) {
       if (_recentHubPacketIds.containsKey(pktId)) {
-        _log('Drop duplicate hub packet id=0x${pktId.toRadixString(16)}');
+        _log('Drop duplicate hub packet id=$pktId');
         return; // duplicate, ignore
       }
       _recentHubPacketIds[pktId] = nowSec;
