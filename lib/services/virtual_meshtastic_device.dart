@@ -438,16 +438,7 @@ class VirtualMeshtasticDevice {
     return out;
   }
 
-  String _hexDump(List<int> bytes, {int bytesPerLine = 16}) {
-    if (bytes.isEmpty) return '';
-    final sb = StringBuffer();
-    for (var i = 0; i < bytes.length; i++) {
-      if (i > 0) sb.write(i % bytesPerLine == 0 ? '\n' : ' ');
-      final b = bytes[i] & 0xFF;
-      sb.write(b.toRadixString(16).padLeft(2, '0'));
-    }
-    return sb.toString();
-  }
+  // (hex dump helper removed; use JSON logs for visibility)
 
   Future<void> _sendInitialConfigAndComplete(int requestId) async {
     // MyNodeInfo
@@ -814,10 +805,13 @@ class VirtualMeshtasticDevice {
             }
 
             // Normal path: forward decrypted decoded packet
-            final decodedPkt = pkt.deepCopy();
+            var decodedPkt = pkt.deepCopy();
             decodedPkt.clearEncrypted();
             decodedPkt.decoded = data;
             decodedPkt.channel = idx; // for decoded, channel is local index
+
+            // If TRACEROUTE_APP, append rxSnr to snrBack before sending
+            decodedPkt = _maybeInjectSnrIntoTraceroute(decodedPkt);
 
             await _sendFromRadio(mesh.FromRadio()..packet = decodedPkt);
             return;
@@ -828,8 +822,38 @@ class VirtualMeshtasticDevice {
       }
     }
 
-    // Default: forward packet unchanged
+    // Default: forward packet unchanged, but inject traceroute SNR if applicable
+    if (pkt.whichPayloadVariant() == mesh.MeshPacket_PayloadVariant.decoded &&
+        pkt.hasDecoded() &&
+        pkt.decoded.portnum == ports.PortNum.TRACEROUTE_APP) {
+      final modified = _maybeInjectSnrIntoTraceroute(pkt);
+      await _sendFromRadio(mesh.FromRadio()..packet = modified);
+      return;
+    }
+
     await _sendFromRadio(mesh.FromRadio()..packet = pkt);
+  }
+
+  // If this decoded packet is a TRACEROUTE_APP RouteDiscovery, append rxSnr (dB * 4) to snrBack
+  mesh.MeshPacket _maybeInjectSnrIntoTraceroute(mesh.MeshPacket src) {
+    try {
+      if (!src.hasDecoded()) return src;
+      final data = src.decoded;
+      if (data.portnum != ports.PortNum.TRACEROUTE_APP) return src;
+      if (!src.hasRxSnr()) return src;
+
+      final payload = Uint8List.fromList(data.payload);
+      final rd = mesh.RouteDiscovery.fromBuffer(payload);
+      final scaledSnr = (src.rxSnr * 4).round() & 0xFF;
+      rd.snrBack.add(scaledSnr);
+
+      final out = src.deepCopy();
+      out.decoded.payload = rd.writeToBuffer();
+      return out;
+    } catch (e) {
+      _log('Traceroute SNR injection failed: $e');
+      return src;
+    }
   }
 
   MapEntry<int, chpb.ChannelSettings>? _findChannelByHash(int hashByte) {
