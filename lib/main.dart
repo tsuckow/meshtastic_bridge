@@ -122,6 +122,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
   StreamSubscription<String>? _virtLogSub;
   StreamSubscription<void>? _dev1StatsSub;
   StreamSubscription<void>? _dev2StatsSub;
+  StreamSubscription<void>? _hubStatsSub;
   StreamSubscription<void>? _dev1InfoSub;
   StreamSubscription<void>? _dev2InfoSub;
   StreamSubscription<bool>? _virtConnSub;
@@ -140,6 +141,9 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     // Hub will bridge encrypted packets among devices and virtual
     _hub = EncryptedTrafficHub(
         deviceA: _dev1, deviceB: _dev2, virtualDevice: _virt);
+    _hubStatsSub = _hub?.statsChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
 
     // Merge device logs into UI log pane
     _dev1LogSub = _dev1.logs.listen(_appendLog);
@@ -361,6 +365,7 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
     _dev2.dispose();
     _virtConnSub?.cancel();
     _virt.dispose();
+  _hubStatsSub?.cancel();
     _hub?.dispose();
     // Also cancel AppBar listeners if set
     final home = context.findAncestorStateOfType<_MyHomePageState>();
@@ -388,6 +393,73 @@ class _BleDeviceSelectorState extends State<BleDeviceSelector> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Packet statistics'),
+        const SizedBox(height: 8),
+        // Channel utilization averages derived from TELEMETRY DeviceMetrics
+        if (_hub != null)
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade400),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Avg Channel Util (D1): ${_hub!.device1AvgUtil.toStringAsFixed(2)}',
+                    style: cellTextStyle,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade400),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Avg Channel Util (D2): ${_hub!.device2AvgUtil.toStringAsFixed(2)}',
+                    style: cellTextStyle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (_hub != null) const SizedBox(height: 8),
+        if (_hub != null)
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Last minute (D1): ${_hub!.device1PacketsLastMinute}  •  Dropped: ${_hub!.device1DroppedLastMinute}',
+                    style: cellTextStyle,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Last minute (D2): ${_hub!.device2PacketsLastMinute}  •  Dropped: ${_hub!.device2DroppedLastMinute}',
+                    style: cellTextStyle,
+                  ),
+                ),
+              ),
+            ],
+          ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
